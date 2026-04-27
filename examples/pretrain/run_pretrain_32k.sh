@@ -1,5 +1,5 @@
 #!/bin/bash
-# Qwen3-1.6B Summary Attention — 32k pretrain continuing from 8k DCP checkpoint.
+# Qwen3-1.9B Summary Attention — 32k pretrain continuing from 8k DCP checkpoint.
 #
 # Two modes (controlled by RESUME_DATALOADER below):
 #   - RESUME_DATALOADER=0: first launch. Load weights only from 8k DCP,
@@ -14,10 +14,10 @@ set -e
 # ============================================
 # Paths — ADJUST THESE
 # ============================================
-CHECKPOINT_DIR=/path/to/muse_outputs/1b6_sa_hybrid_8k   # 8k DCP on first launch; this 32k output on resume
-MODEL_CONFIG=examples/pretrain/model_config/model_config_1b6_hybrid.json
+CHECKPOINT_DIR=/path/to/muse_outputs/1b9_sa_hybrid_8k   # 8k DCP on first launch; this 32k output on resume
+MODEL_CONFIG=examples/pretrain/model_config/model_config_1b9_hybrid.json
 DATASET_CONFIG=examples/pretrain/dataset_config/pretrain_kai_mmap_32k.json
-OUTPUT_DIR=/path/to/muse_outputs/1b6_sa_hybrid_32k
+OUTPUT_DIR=/path/to/muse_outputs/1b9_sa_hybrid_32k
 
 # ============================================
 # Training hyperparameters
@@ -44,7 +44,7 @@ source set_env.sh
 mkdir -p $OUTPUT_DIR
 
 git_hash=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-comment="pretrain_1b6_sa_hybrid_32k"
+comment="pretrain_1b9_sa_hybrid_32k"
 
 hostfile=/etc/mpi/hostfile_seq
 sed 's/=1/=8/g' /etc/mpi/hostfile > $hostfile 2>/dev/null || true

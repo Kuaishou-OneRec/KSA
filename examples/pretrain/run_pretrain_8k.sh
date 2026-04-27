@@ -1,5 +1,5 @@
 #!/bin/bash
-# Qwen3-1.6B Summary Attention — from-scratch 8k pretrain.
+# Qwen3-1.9B Summary Attention — from-scratch 8k pretrain.
 # Model is randomly initialized from MODEL_CONFIG.
 #
 # Usage: bash examples/pretrain/run_pretrain_8k.sh
@@ -9,9 +9,9 @@ set -e
 # ============================================
 # Paths — ADJUST THESE
 # ============================================
-MODEL_CONFIG=examples/pretrain/model_config/model_config_1b6_hybrid.json
+MODEL_CONFIG=examples/pretrain/model_config/model_config_1b9_hybrid.json
 DATASET_CONFIG=examples/pretrain/dataset_config/pretrain_kai_mmap_8k.json
-OUTPUT_DIR=./outputs/1b6_sa_hybrid_8k
+OUTPUT_DIR=./outputs/1b9_sa_hybrid_8k
 
 # ============================================
 # Training hyperparameters
@@ -37,7 +37,7 @@ source set_env.sh
 mkdir -p $OUTPUT_DIR
 
 git_hash=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-comment="pretrain_1b6_sa_hybrid_8k"
+comment="pretrain_1b9_sa_hybrid_8k"
 
 hostfile=/etc/mpi/hostfile_seq
 sed 's/=1/=8/g' /etc/mpi/hostfile > $hostfile 2>/dev/null || true

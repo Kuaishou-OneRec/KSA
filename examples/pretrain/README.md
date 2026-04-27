@@ -1,6 +1,6 @@
 # Pretrain
 
-Progressive-length pretraining pipeline for Qwen3-1.6B Summary Attention
+Progressive-length pretraining pipeline for Qwen3-1.9B Summary Attention
 (hybrid variant). Train from scratch at 8k, then extend context to 32k → 64k
 → 128k, each stage resuming weights from the previous one.
 
@@ -9,7 +9,7 @@ Progressive-length pretraining pipeline for Qwen3-1.6B Summary Attention
 ```
 examples/pretrain/
 ├── model_config/                       # model architecture JSON
-│   └── model_config_1b6_hybrid.json
+│   └── model_config_1b9_hybrid.json
 ├── dataset_config/                     # per-seq-length dataset JSONs
 │   ├── pretrain_kai_mmap_8k.json
 │   ├── pretrain_kai_mmap_32k.json
@@ -30,23 +30,23 @@ examples/pretrain/
 ## Pipeline
 
 ```
-  run_pretrain_8k.sh   →  1b6_sa_hybrid_8k/   (from scratch)
+  run_pretrain_8k.sh   →  1b9_sa_hybrid_8k/   (from scratch)
           │
           ▼  resume weights
-  run_pretrain_32k.sh  →  1b6_sa_hybrid_32k/
+  run_pretrain_32k.sh  →  1b9_sa_hybrid_32k/
           │
           ▼  resume weights
-  run_pretrain_64k.sh  →  1b6_sa_hybrid_64k/
+  run_pretrain_64k.sh  →  1b9_sa_hybrid_64k/
           │
           ▼  resume weights
-  run_pretrain_128k.sh →  1b6_sa_hybrid_128k/
+  run_pretrain_128k.sh →  1b9_sa_hybrid_128k/
           │
           ▼  convert
   global_stepN/hf/     (HF-inferable directory)
 ```
 
 Each stage's output dir name matches the pattern
-`1b6_sa_hybrid_{8,32,64,128}k`. The next stage's `CHECKPOINT_DIR` is set to
+`1b9_sa_hybrid_{8,32,64,128}k`. The next stage's `CHECKPOINT_DIR` is set to
 the previous stage's `OUTPUT_DIR` by default — edit the paths at the top of
 each script if you store outputs elsewhere.
 
@@ -79,7 +79,7 @@ If a 128k run dies halfway:
 
 ```bash
 # edit run_pretrain_128k.sh
-CHECKPOINT_DIR=/.../muse_outputs/1b6_sa_hybrid_128k   # point at THIS stage's output
+CHECKPOINT_DIR=/.../muse_outputs/1b9_sa_hybrid_128k   # point at THIS stage's output
 RESUME_DATALOADER=1                                    # resume weights + dataloader
 # then relaunch
 bash examples/pretrain/run_pretrain_128k.sh
@@ -92,7 +92,7 @@ alongside each saved checkpoint and replayed when `RESUME_DATALOADER=1`.
 
 ```bash
 bash examples/pretrain/convert/convert_muse_to_hf.sh \
-    /path/to/muse_outputs/1b6_sa_hybrid_8k \
+    /path/to/muse_outputs/1b9_sa_hybrid_8k \
     global_step5000 \
     examples/pretrain/hf_template
 ```

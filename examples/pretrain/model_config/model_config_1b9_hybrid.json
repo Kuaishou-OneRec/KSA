@@ -19,7 +19,7 @@
   "v_proj_bias": false,
   "q_norm": true,
   "k_norm": true,
-  "tie_word_embeddings": true,
+  "tie_word_embeddings": false,
 
   "use_summary_attention": true,
   "summary_chunk_size": 8,

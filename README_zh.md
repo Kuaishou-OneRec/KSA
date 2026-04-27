@@ -7,7 +7,7 @@
     <a href="#-引用">
         <img alt="Paper" src="https://img.shields.io/badge/Paper-Technical%20Report-b31b1b?logo=arxiv" />
     </a>
-    <a href="https://github.com/Kuaishou-OneRec">
+    <a href="https://github.com/Kuaishou-OneRec/KSA">
         <img alt="GitHub" src="https://img.shields.io/badge/GitHub-Kuaishou--OneRec-black?logo=github" />
     </a>
     <a href="#-许可证">
@@ -22,14 +22,14 @@
 
 ## 📖 简介
 
-**Kwai Summary Attention（KSA）** 是一种高效注意力机制，通过在固定 chunk 边界插入少量 *可学习 Summary Token* 把历史上下文压缩成紧凑状态。相比 GQA/MLA 仍保留每 token 一份 KV cache，以及 SWA/线性注意力完全丢弃或有损压缩远距离历史，KSA 选择一条 **中间路线**：KV cache 以语义级压缩比 R 按 **O(N/R)** 缩放，用少量显存换取 *完整、可回溯、可解释* 的长程依赖。
+**Kwai Summary Attention（KSA）** 是一种高效注意力机制，在固定 chunk 边界插入少量 *可学习 Summary Token*，把历史上下文压缩到一组紧凑的状态里。GQA/MLA 会保留每个 token 的 KV cache，SWA / 线性注意力则直接丢弃或有损压缩远端历史；KSA 走的是 **中间路线** —— KV cache 以语义级压缩比 R 按 **O(N/R)** 规模增长，用少量显存换来 *完整、可回溯、可解释* 的长程依赖。
 
 本仓库提供：
 
 - **Muse** 训练框架与 Qwen3 + Summary Attention 模型实现。
 - 训练 / prefill 阶段的块稀疏 **kernel**（已打包为 wheel）。
 - 解码阶段的 **ring-buffer KV cache**，以 HuggingFace `trust_remote_code` 模板形式发布。
-- 一份把 Qwen3-1.6B 基座从 8k → 32k → 64k → 128k 渐进式训到位的 **端到端 pretraining recipe**。
+- 一份把 Qwen3-1.9B 基座从 8k → 32k → 64k → 128k 渐进式扩展的 **端到端 pretraining recipe**。
 - DCP → HuggingFace safetensors 的 **权重转换脚本** 与推理自测脚本。
 
 <p align="center"><img src="./assets/figures/mainmodel.png" width="80%" alt="KSA 混合架构：Summary Token 与 Text Token 交织,Summary Attention 层与 Full Attention 层按 3:1 比例堆叠。" /></p>
@@ -56,7 +56,7 @@
 | :------------ | :---------- | :----- | :------ | :-------------------- | :---- |
 | KSA-4B (CPT)  | Qwen3-4B    | 4B     | 128k    | Continual Pretraining | *TBD* |
 
-1.6B *from-scratch* 配置只作为可复现的训练 recipe 提供,不会发布对应权重。
+1.9B *from-scratch* 配置只作为可复现的训练 recipe 提供,不会发布对应权重。
 
 ## 🏗️ 方法与架构
 
@@ -87,15 +87,15 @@ scratch / current chunk / sliding ring / summary buffer 都是同一块物理 te
 
 1. **Attention 蒸馏** —— 用 Full-Attention teacher warm-up Summary Attention 参数。
 2. **参数退火** —— 解冻全模型联合优化。
-3. **长度扩展** —— 放大 `max_position_embeddings`,调整 RoPE base 继续训练。
+3. **长度扩展** —— 扩大 `max_position_embeddings`，调整 RoPE base 后继续训练。
 
 每阶段具体超参见 [`examples/pretrain/README.md`](examples/pretrain/README.md)。
 
-### 发布版模型配置
+### 发布模型配置
 
-本次发布包含两套 recipe:1.6B hybrid 从零训练(仅配方,不发布权重)、以及 4B 连续预训练版本。
+本次发布包含两套 recipe：1.9B hybrid 从零训练（仅配方，不发布权重），以及 4B Continual Pretraining 版本。
 
-| 配置项                         | From Scratch (1.6B)  | Continual Pretraining (4B) |
+| 配置项                         | From Scratch (1.9B)  | Continual Pretraining (4B) |
 | :----------------------------- | :------------------- | :------------------------- |
 | 层数                           | 24                   | 36                         |
 | Hidden size                    | 2048                 | 2560                       |
@@ -107,7 +107,7 @@ scratch / current chunk / sliding ring / summary buffer 都是同一块物理 te
 | Sliding chunk number           | 128                  | 128                        |
 | Tied embeddings                | False                | True                       |
 
-配置文件位于 [`examples/pretrain/model_config/model_config_1b6_hybrid.json`](examples/pretrain/model_config/model_config_1b6_hybrid.json),通过 `muse/models/` 中注册的 `Qwen3SummaryAttentionConfig` / `Qwen3SummaryModel` 加载。
+配置文件位于 [`examples/pretrain/model_config/model_config_1b9_hybrid.json`](examples/pretrain/model_config/model_config_1b9_hybrid.json),通过 `muse/models/` 中注册的 `Qwen3SummaryAttentionConfig` / `Qwen3SummaryModel` 加载。
 
 ## 📈 实验结果
 
@@ -161,7 +161,7 @@ bash examples/pretrain/run_pretrain_128k.sh   # 4. 扩到 128k
 
 ```bash
 bash examples/pretrain/convert/convert_muse_to_hf.sh \
-     /path/to/muse_outputs/1b6_sa_hybrid_128k \
+     /path/to/muse_outputs/1b9_sa_hybrid_128k \
      global_step5000 \
      examples/pretrain/hf_template
 ```
@@ -194,7 +194,7 @@ python examples/inference/inference.py \
 │   └── flash_attn_cute-*.whl       # kernel 依赖的 CuTe FlashAttention 构建
 ├── examples/
 │   ├── pretrain/                   # 8k → 128k 渐进式 recipe
-│   │   ├── model_config/           # model_config_1b6_hybrid.json
+│   │   ├── model_config/           # model_config_1b9_hybrid.json
 │   │   ├── dataset_config/         # 各 seq len 的 mmap 数据集描述
 │   │   ├── run_pretrain_{8,32,64,128}k.sh
 │   │   ├── convert/                # DCP → HF safetensors
@@ -211,8 +211,8 @@ python examples/inference/inference.py \
 正在推进:
 
 - [ ] 技术报告上 arXiv。
-- [ ] Hugging Face 发布 1.6B 预训练 checkpoint。
-- [ ] 放出 4B 连续预训练 recipe 与 checkpoint。
+- [ ] Hugging Face 发布 1.9B 预训练 checkpoint。
+- [ ] 放出 4B Continual Pretraining recipe 与 checkpoint。
 - [ ] RULER / NIAH / LongBench v2 复现脚本。
 - [ ] 内置 ring-buffer KV cache 的参考推理/Serving 栈。
 - [ ] 更多消融与教程。
@@ -229,7 +229,7 @@ python examples/inference/inference.py \
   author      = {OneRec Team},
   year        = {2026},
   institution = {Kuaishou Technology},
-  url         = {https://github.com/Kuaishou-OneRec}
+  url         = {https://github.com/Kuaishou-OneRec/KSA}
 }
 ```
 
@@ -243,7 +243,7 @@ KSA 构建在开源生态之上。感谢:
 
 - **Qwen3** —— 提供 KSA 扩展所依赖的基座架构与 tokenizer。
 - **FlashAttention** —— 我们块稀疏 kernel 背后的 dense attention 原语。
-- **HuggingFace Transformers** —— 让 `trust_remote_code` 部署无缝衔接的模型 / tokenizer / generation 抽象。
-- **PyTorch 分布式训练** —— FSDP、DCP、通信原语让大规模预训练可行。
+- **HuggingFace Transformers** —— 模型 / tokenizer / generation 抽象让 `trust_remote_code` 部署无缝衔接。
+- **PyTorch 分布式训练** —— FSDP、DCP 与通信原语是大规模预训练的基石。
 
 由衷感谢这些项目的出色工作。

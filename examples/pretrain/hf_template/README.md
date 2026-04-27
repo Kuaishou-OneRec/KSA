@@ -22,7 +22,7 @@ verbatim into `<OUTPUT_DIR>/<STEP>/hf/` by the convert script.
 
 ```bash
 bash examples/pretrain/convert/convert_muse_to_hf.sh \
-    /path/to/muse_outputs/1b6_sa_hybrid_8k \
+    /path/to/muse_outputs/1b9_sa_hybrid_8k \
     global_step5000 \
     examples/pretrain/hf_template
 ```

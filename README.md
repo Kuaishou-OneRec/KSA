@@ -7,7 +7,7 @@
     <a href="#-citation">
         <img alt="Paper" src="https://img.shields.io/badge/Paper-Technical%20Report-b31b1b?logo=arxiv" />
     </a>
-    <a href="https://github.com/Kuaishou-OneRec">
+    <a href="https://github.com/Kuaishou-OneRec/KSA">
         <img alt="GitHub" src="https://img.shields.io/badge/GitHub-Kuaishou--OneRec-black?logo=github" />
     </a>
     <a href="#-license">
@@ -29,7 +29,7 @@ This repository contains:
 - **Muse** training framework with the Qwen3 + Summary Attention model.
 - A block-sparse training / prefill **kernel** for Summary Attention.
 - A ring-buffer **KV cache** implementation for decoding, packaged as a HuggingFace `trust_remote_code` template.
-- A full end-to-end **pretraining recipe** that progressively extends a Qwen3-1.6B base from 8k to 128k context.
+- A full end-to-end **pretraining recipe** that progressively extends a Qwen3-1.9B base from 8k to 128k context.
 - Weight conversion utilities (DCP → HuggingFace safetensors) and an inference sanity-check script.
 
 <p align="center"><img src="./assets/figures/mainmodel.png" width="80%" alt="KSA hybrid architecture: summary tokens interleaved with text tokens, with Summary Attention layers and Full Attention layers in a 3:1 hybrid ratio." /></p>
@@ -56,7 +56,7 @@ This repository contains:
 | :------------ | :---------- | :--------- | :------ | :-------------------- | :---- |
 | KSA-4B (CPT)  | Qwen3-4B    | 4B         | 128k    | Continual pretraining | *TBD* |
 
-The 1.6B *from-scratch* configuration is provided as a reproducible recipe only; no 1.6B weights will be released.
+The 1.9B *from-scratch* configuration is provided as a reproducible recipe only; no 1.9B weights will be released.
 
 ## 🏗️ Method & Architecture
 
@@ -93,9 +93,9 @@ See [`examples/pretrain/README.md`](examples/pretrain/README.md) for per-stage h
 
 ### Released model configuration
 
-The release ships two recipes: a 1.6B hybrid model trained from scratch (recipe only — no weights released) and a 4B continual-pretraining variant.
+The release ships two recipes: a 1.9B hybrid model trained from scratch (recipe only — no weights released) and a 4B continual-pretraining variant.
 
-| Configuration                 | From Scratch (1.6B) | Continual Pretraining (4B) |
+| Configuration                 | From Scratch (1.9B) | Continual Pretraining (4B) |
 | :---------------------------- | :------------------ | :------------------------- |
 | Number of layers              | 24                  | 36                         |
 | Hidden size                   | 2048                | 2560                       |
@@ -107,7 +107,7 @@ The release ships two recipes: a 1.6B hybrid model trained from scratch (recipe 
 | Sliding chunk number          | 128                 | 128                        |
 | Tied embeddings               | False               | True                       |
 
-The config lives at [`examples/pretrain/model_config/model_config_1b6_hybrid.json`](examples/pretrain/model_config/model_config_1b6_hybrid.json) and is loaded via the `Qwen3SummaryAttentionConfig` / `Qwen3SummaryModel` registered in `muse/models/`.
+The config lives at [`examples/pretrain/model_config/model_config_1b9_hybrid.json`](examples/pretrain/model_config/model_config_1b9_hybrid.json) and is loaded via the `Qwen3SummaryAttentionConfig` / `Qwen3SummaryModel` registered in `muse/models/`.
 
 ## 📈 Performance
 
@@ -161,7 +161,7 @@ Edit `CHECKPOINT_DIR` / `OUTPUT_DIR` at the top of each script to match your sto
 
 ```bash
 bash examples/pretrain/convert/convert_muse_to_hf.sh \
-     /path/to/muse_outputs/1b6_sa_hybrid_128k \
+     /path/to/muse_outputs/1b9_sa_hybrid_128k \
      global_step5000 \
      examples/pretrain/hf_template
 ```
@@ -194,7 +194,7 @@ The inference path uses HuggingFace's `AutoModelForCausalLM` with `trust_remote_
 │   └── flash_attn_cute-*.whl       # CuTe-based FlashAttention build used by the kernel
 ├── examples/
 │   ├── pretrain/                   # Progressive 8k→128k recipe
-│   │   ├── model_config/           # model_config_1b6_hybrid.json
+│   │   ├── model_config/           # model_config_1b9_hybrid.json
 │   │   ├── dataset_config/         # per-seq-length mmap dataset specs
 │   │   ├── run_pretrain_{8,32,64,128}k.sh
 │   │   ├── convert/                # DCP → HF safetensors
@@ -211,7 +211,7 @@ The inference path uses HuggingFace's `AutoModelForCausalLM` with `trust_remote_
 We are actively working on:
 
 - [ ] Technical report on arXiv.
-- [ ] Publish pretrained 1.6B checkpoints on Hugging Face.
+- [ ] Publish pretrained 1.9B checkpoints on Hugging Face.
 - [ ] Release the 4B continual-pretraining recipe and checkpoint.
 - [ ] Expanded evaluation scripts for RULER / NIAH / LongBench v2 reproduction.
 - [ ] A reference serving stack with the ring-buffer KV cache.
@@ -229,7 +229,7 @@ Contributions are welcome — feel free to open an issue or PR.
   author      = {OneRec Team},
   year        = {2026},
   institution = {Kuaishou Technology},
-  url         = {https://github.com/Kuaishou-OneRec}
+  url         = {https://github.com/Kuaishou-OneRec/KSA}
 }
 ```
 
