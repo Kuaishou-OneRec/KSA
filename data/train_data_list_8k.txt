@@ -1,0 +1,6 @@
+common_knowledge	0.45	data/common_knowledge__fineweb_edu
+code	0.20	data/code__github_code_v2
+math	0.15	data/math__open_web_math
+qa	0.08	data/qa__metamath
+STEM	0.07	data/STEM__pile_freelaw
+general_reasoning	0.05	data/general_reasoning__wiki_v2

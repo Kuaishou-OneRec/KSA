@@ -1,0 +1,33 @@
+{
+  "__class__": "Qwen3SummaryAttentionConfig",
+  "model_class": "Qwen3SummaryModel",
+
+  "vocab_size": 151936,
+  "embed_dim": 2048,
+  "num_layers": 24,
+  "num_heads": 16,
+  "num_kv_heads": 16,
+  "head_dim": 128,
+  "intermediate_dim": 6144,
+  "max_seq_len": 131072,
+  "rope_base": 10000,
+  "norm_eps": 1e-6,
+  "attn_dropout": 0.0,
+  "attention_function": "flash_attention_2",
+  "q_proj_bias": false,
+  "k_proj_bias": false,
+  "v_proj_bias": false,
+  "q_norm": true,
+  "k_norm": true,
+  "tie_word_embeddings": true,
+
+  "use_summary_attention": true,
+  "summary_chunk_size": 8,
+  "summary_token_num": 1,
+  "summary_token_begin": 151936,
+  "summary_sliding_chunk_num": "([128]*3+[1024]*1)*6",
+  "summary_chunk_position_ids_type": "origin",
+  "summary_token_position_ids_type": "last_chunk_slice_right",
+  "summary_independent_parameters": true,
+  "summary_attention_mode": "kernel"
+}

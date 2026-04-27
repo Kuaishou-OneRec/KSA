@@ -1,0 +1,9 @@
+{
+  "name": "KaiMMapDataset",
+  "data_prefix": "/path/to/kai_mmap_dataset/128k_final_label",
+  "seq_length": 131072,
+  "seed": 1024,
+  "global_batch_size": 8,
+  "skip_warmup": true,
+  "num_workers": 1
+}

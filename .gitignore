@@ -1,0 +1,37 @@
+__pycache__
+*hosts
+*.so
+build
+.coverage_*
+*.egg-info
+*~
+.vscode/
+.idea/
+.DS_Store
+
+*.deb
+*.swp
+*.log
+*.err
+*.bin
+!data/*.bin
+*.out
+*.ipynb
+*.parquet
+*.ttf
+*.pt
+hostfile
+
+# Ignore inference results produced by visualization scripts
+results/
+*xlsx
+vis_output
+*png
+*jpg
+!assets/**/*.png
+!assets/**/*.jpg
+debug
+.worktrees/
+
+# Local env file — users copy .env.example to .env
+.env

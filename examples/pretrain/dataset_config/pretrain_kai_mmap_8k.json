@@ -1,0 +1,9 @@
+{
+  "name": "KaiMMapDataset",
+  "data_prefix": "data/train_data_list_8k.txt",
+  "seq_length": 8192,
+  "seed": 1024,
+  "global_batch_size": 8,
+  "skip_warmup": true,
+  "num_workers": 1
+}
