@@ -4,8 +4,8 @@
     <strong>基于可学习 Summary Token 的高效长上下文建模</strong>
   </p>
   <p align="center">
-    <a href="#-引用">
-        <img alt="Paper" src="https://img.shields.io/badge/Paper-Technical%20Report-b31b1b?logo=arxiv" />
+    <a href="https://arxiv.org/abs/2604.24432">
+        <img alt="Paper" src="https://img.shields.io/badge/Paper-arXiv%3A2604.24432-b31b1b?logo=arxiv" />
     </a>
     <a href="https://github.com/Kuaishou-OneRec/KSA">
         <img alt="GitHub" src="https://img.shields.io/badge/GitHub-Kuaishou--OneRec-black?logo=github" />
@@ -37,7 +37,8 @@
 
 ## 🔥 新闻
 
-*Coming soon.* 技术报告和模型权重公开后将补上带日期的条目。
+- **2026-04-28** —— KSA 技术报告已发布于 arXiv：[arXiv:2604.24432](https://arxiv.org/abs/2604.24432)。
+- **2026-04-28** —— 训练代码、recipe、块稀疏 kernel 与 HuggingFace `trust_remote_code` 模板在本仓库开源。
 
 ## ✨ 核心特性
 
@@ -111,17 +112,53 @@ scratch / current chunk / sliding ring / summary buffer 都是同一块物理 te
 
 ## 📈 实验结果
 
-*具体数字将在技术报告公开后补上。* 论文在以下维度上评估 KSA:
+我们在两个设定下评估 KSA：从 Qwen3-4B-base 出发的 **Continual Pretraining (CPT，85B tokens)**，以及 **从零训练 (1.9B，400B tokens)**。完整结果见[技术报告](https://arxiv.org/abs/2604.24432)，下面摘录其中的关键数据。
 
-- **长上下文检索** —— RULER (4k–128k)、NIAH 单针/多针、LongBench v2。
-- **通用知识与推理** —— MMLU、CMMLU、GSM8k、CMath、MBPP。
-- **效率** —— KV cache 随序列长度的占用、不同 prefill 下的解码吞吐。
+### 长上下文检索 —— RULER（CPT, 4B）
 
-128k 场景下的关键结论(CPT 设置):
+| Benchmark   | Full      | Hybrid-SWA | Hybrid-SCA | Hybrid-Linear | KSA   | **Hybrid-KSA** |
+| :---------- | :-------- | :--------- | :--------- | :------------ | :---- | :------------- |
+| RULER-4K    | 92.88     | 91.30      | 86.02      | 86.39         | 91.55 | **92.97**      |
+| RULER-8K    | **91.38** | 88.03      | 84.28      | 83.86         | 86.78 | 90.53          |
+| RULER-16K   | **89.12** | 82.87      | 80.67      | 78.06         | 84.78 | 88.86          |
+| RULER-32K   | 84.74     | 78.94      | 76.89      | 76.48         | 80.30 | **86.65**      |
+| RULER-64K   | **78.16** | 73.88      | 68.88      | 73.50         | 76.09 | 76.04          |
+| RULER-128K  | 65.86     | 66.27      | 60.94      | 67.98         | 66.81 | **71.67**      |
 
-- **Hybrid-Summary** 在 RULER-128k 上超过 Full attention,KV 占用显著更小。
-- **Hybrid-Summary** 在 4K–128K 全部 context 长度、全部 needle 插入深度下均接近满分的 NIAH 单针检索。
-- **Hybrid-Summary** 在 16k prefill 下解码速度高于 Full attention,且优于 Hybrid-SWA 与 Hybrid-Ring-Linear。
+Hybrid-KSA 在 4K / 32K / 128K 三档取得最佳，**128K 上比 Full attention 高 +5.81 分**，同时 KV cache 占用显著更小。横跨所有 RULER 长度，它都是与 Full attention 差距最小的次二次方变体。
+
+### 通用能力（CPT, 4B）
+
+| Benchmark | Full      | Hybrid-SWA | Hybrid-SCA | Hybrid-Linear | KSA   | **Hybrid-KSA** |
+| :-------- | :-------- | :--------- | :--------- | :------------ | :---- | :------------- |
+| MMLU      | **71.83** | 70.57      | 69.83      | 64.33         | 70.73 | 70.50          |
+| CMMLU     | **75.00** | 73.69      | 72.59      | 68.41         | 73.29 | 72.63          |
+| C-Eval    | **73.66** | 72.36      | 71.66      | 67.42         | 72.14 | 72.66          |
+| MMLU-Pro  | **46.36** | 45.23      | 45.11      | 38.83         | 45.70 | 45.39          |
+| CMath     | 83.41     | **84.84**  | 83.16      | 79.09         | 84.58 | 84.25          |
+| GSM8K     | **82.75** | 81.92      | 80.10      | 72.44         | 81.09 | 79.50          |
+| MATH      | 47.48     | **48.24**  | 47.45      | 42.57         | 48.15 | 47.56          |
+| MBPP      | 61.30     | 61.70      | 59.60      | 55.30         | 61.50 | **62.20**      |
+| HumanEval | 58.54     | 61.89      | 61.89      | 54.58         | 60.97 | **62.50**      |
+| **均值**  | 73.50     | 72.12      | 69.94      | 67.28         | 72.30 | **73.59**      |
+
+CPT 设置下 KSA 完整保留了通用能力 —— Hybrid-KSA 平均 **73.59，反超 Full attention 的 73.50**，是所有次二次方变体中与 Full 差距最小的。
+
+### 从零训练（1.9B，400B tokens）
+
+- **RULER-128K**：Hybrid-KSA **65.35** vs. Full **48.75**（**+16.60**）。Hybrid-KSA 随长度增长保持稳定（4K→128K：80.65→65.35），Full attention 则严重退化（76.08→48.75）。
+- **GSM8K**：Hybrid-KSA **59.14** vs. Full **48.29**（**+10.85**）。**MATH**：**36.92** vs. **23.38**（**+13.54**）。
+- **MBPP / HumanEval**：所有配置最佳，**36.40 / 31.71**。
+- **训练 Loss**：Hybrid-KSA 收敛到最低 loss（**1.524**），低于 Hybrid-GDN（1.534）、Hybrid-SWA（1.550）、Full（1.572）。
+
+### Needle-in-a-Haystack 与 RULER-128K 子任务（CPT）
+
+Hybrid-KSA 在 4K–128K 全长度、全 needle 深度下接近满分单针检索，仅 128K 处略有微降。RULER-128K 子任务上：**NIAH-Multivalue 98.75（比 Full 高 +10.63）**、**VT 90.50（比 Full 高 +30.0）**、**FWE 65.84**、**SQuAD 42.50** 均处于领先。
+
+### 推理效率（4B, 128K）
+
+- **KV cache**：7.5 GB vs. Full attention 18.6 GB —— **2.5× 压缩**。
+- **解码吞吐**（16K prefill）：**1.06× of Full**，而 Hybrid-SWA 仅 0.73×、Hybrid-Ring-Linear 仅 0.81×。
 
 ## 🚀 快速开始
 
@@ -210,7 +247,7 @@ python examples/inference/inference.py \
 
 正在推进:
 
-- [ ] 技术报告上 arXiv。
+- [x] 技术报告上 arXiv（[arXiv:2604.24432](https://arxiv.org/abs/2604.24432)）。
 - [ ] Hugging Face 发布 1.9B 预训练 checkpoint。
 - [ ] 放出 4B Continual Pretraining recipe 与 checkpoint。
 - [ ] RULER / NIAH / LongBench v2 复现脚本。
@@ -221,7 +258,7 @@ python examples/inference/inference.py \
 
 ## 📜 引用
 
-*BibTeX 会在技术报告正式公开后确定,现为占位版本:*
+如果 KSA 对你的工作有帮助，请引用我们的技术报告：
 
 ```bibtex
 @techreport{kwai2026ksa,
@@ -229,7 +266,7 @@ python examples/inference/inference.py \
   author      = {OneRec Team},
   year        = {2026},
   institution = {Kuaishou Technology},
-  url         = {https://github.com/Kuaishou-OneRec/KSA}
+  url         = {https://arxiv.org/abs/2604.24432}
 }
 ```
 

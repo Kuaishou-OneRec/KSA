@@ -4,8 +4,8 @@
     <strong>Efficient long-context modeling via learnable summary tokens</strong>
   </p>
   <p align="center">
-    <a href="#-citation">
-        <img alt="Paper" src="https://img.shields.io/badge/Paper-Technical%20Report-b31b1b?logo=arxiv" />
+    <a href="https://arxiv.org/abs/2604.24432">
+        <img alt="Paper" src="https://img.shields.io/badge/Paper-arXiv%3A2604.24432-b31b1b?logo=arxiv" />
     </a>
     <a href="https://github.com/Kuaishou-OneRec/KSA">
         <img alt="GitHub" src="https://img.shields.io/badge/GitHub-Kuaishou--OneRec-black?logo=github" />
@@ -37,7 +37,8 @@ This repository contains:
 
 ## 🔥 News
 
-*Coming soon.* Dated entries will be added once the technical report and checkpoints are public.
+- **2026-04-28** — KSA technical report is released on arXiv: [arXiv:2604.24432](https://arxiv.org/abs/2604.24432).
+- **2026-04-28** — Code, training recipes, block-sparse kernel, and HuggingFace `trust_remote_code` template are open-sourced under this repository.
 
 ## ✨ Highlights
 
@@ -111,17 +112,53 @@ The config lives at [`examples/pretrain/model_config/model_config_1b9_hybrid.jso
 
 ## 📈 Performance
 
-*Numbers will be populated once the technical report is public.* The paper evaluates KSA on:
+We evaluate KSA under two settings — **Continual Pretraining (CPT)** from a Qwen3-4B-base checkpoint (85B tokens), and **Train-from-Scratch** at 1.9B (400B tokens). Full results are in the [technical report](https://arxiv.org/abs/2604.24432); the highlights below are taken directly from its tables.
 
-- **Long-context retrieval** — RULER (4k–128k), NIAH single- and multi-needle, LongBench v2.
-- **General knowledge & reasoning** — MMLU, CMMLU, GSM8k, CMath, MBPP.
-- **Efficiency** — KV cache footprint vs. sequence length, decoding throughput at varying prefill lengths.
+### Long-context retrieval — RULER (CPT, 4B)
 
-Headline takeaways at 128k context (continual pretraining):
+| Benchmark   | Full      | Hybrid-SWA | Hybrid-SCA | Hybrid-Linear | KSA   | **Hybrid-KSA** |
+| :---------- | :-------- | :--------- | :--------- | :------------ | :---- | :------------- |
+| RULER-4K    | 92.88     | 91.30      | 86.02      | 86.39         | 91.55 | **92.97**      |
+| RULER-8K    | **91.38** | 88.03      | 84.28      | 83.86         | 86.78 | 90.53          |
+| RULER-16K   | **89.12** | 82.87      | 80.67      | 78.06         | 84.78 | 88.86          |
+| RULER-32K   | 84.74     | 78.94      | 76.89      | 76.48         | 80.30 | **86.65**      |
+| RULER-64K   | **78.16** | 73.88      | 68.88      | 73.50         | 76.09 | 76.04          |
+| RULER-128K  | 65.86     | 66.27      | 60.94      | 67.98         | 66.81 | **71.67**      |
 
-- **Hybrid-Summary** surpasses Full attention on RULER-128k while operating at a substantially smaller KV footprint.
-- **Hybrid-Summary** achieves near-perfect NIAH single-needle retrieval across 4K–128K context lengths and all needle depths.
-- **Hybrid-Summary** runs decoding faster than Full attention at 16k prefill despite the compressed cache, and faster than Hybrid-SWA and Hybrid-Ring-Linear in tokens/sec.
+Hybrid-KSA leads at 4K, 32K, and 128K, and at **128K it surpasses Full attention by +5.81 points** while operating with a substantially smaller KV cache. Across all RULER lengths it is the strongest sub-quadratic alternative to Full attention.
+
+### General benchmarks (CPT, 4B)
+
+| Benchmark | Full      | Hybrid-SWA | Hybrid-SCA | Hybrid-Linear | KSA   | **Hybrid-KSA** |
+| :-------- | :-------- | :--------- | :--------- | :------------ | :---- | :------------- |
+| MMLU      | **71.83** | 70.57      | 69.83      | 64.33         | 70.73 | 70.50          |
+| CMMLU     | **75.00** | 73.69      | 72.59      | 68.41         | 73.29 | 72.63          |
+| C-Eval    | **73.66** | 72.36      | 71.66      | 67.42         | 72.14 | 72.66          |
+| MMLU-Pro  | **46.36** | 45.23      | 45.11      | 38.83         | 45.70 | 45.39          |
+| CMath     | 83.41     | **84.84**  | 83.16      | 79.09         | 84.58 | 84.25          |
+| GSM8K     | **82.75** | 81.92      | 80.10      | 72.44         | 81.09 | 79.50          |
+| MATH      | 47.48     | **48.24**  | 47.45      | 42.57         | 48.15 | 47.56          |
+| MBPP      | 61.30     | 61.70      | 59.60      | 55.30         | 61.50 | **62.20**      |
+| HumanEval | 58.54     | 61.89      | 61.89      | 54.58         | 60.97 | **62.50**      |
+| **Avg.**  | 73.50     | 72.12      | 69.94      | 67.28         | 72.30 | **73.59**      |
+
+KSA preserves full general capability under CPT — Hybrid-KSA's average **(73.59) edges out Full attention (73.50)**, with the smallest gap-to-Full of any sub-quadratic alternative.
+
+### Train-from-scratch headlines (1.9B, 400B tokens)
+
+- **RULER-128K**: Hybrid-KSA **65.35** vs. Full attention **48.75** ( **+16.60** ). Hybrid-KSA stays robust as length grows (80.65 → 65.35 from 4K to 128K), while Full attention collapses (76.08 → 48.75).
+- **GSM8K**: Hybrid-KSA **59.14** vs. Full **48.29** ( **+10.85** ). **MATH**: **36.92** vs. **23.38** ( **+13.54** ).
+- **MBPP / HumanEval**: best of all configurations at **36.40 / 31.71**.
+- **Training loss**: Hybrid-KSA reaches the lowest final loss (**1.524**), below Hybrid-GDN (1.534), Hybrid-SWA (1.550), and Full (1.572).
+
+### Needle-in-a-Haystack & RULER-128K subtasks (CPT)
+
+Hybrid-KSA achieves **near-perfect single-needle retrieval across 4K–128K** at all needle depths, with only a minor dip at 128K. On RULER-128K subtasks it leads on **NIAH-Multivalue (98.75, +10.63 over Full)**, **VT (90.50, +30.0 over Full)**, **FWE (65.84)**, and **SQuAD (42.50)**.
+
+### Inference efficiency (4B, 128K context)
+
+- **KV cache**: 7.5 GB vs. 18.6 GB for Full attention — a **2.5× reduction**.
+- **Decode throughput** at 16K prefill: **1.06× of Full attention**, vs. 0.73× for Hybrid-SWA and 0.81× for Hybrid-Ring-Linear.
 
 ## 🚀 Quick Start
 
@@ -210,7 +247,7 @@ The inference path uses HuggingFace's `AutoModelForCausalLM` with `trust_remote_
 
 We are actively working on:
 
-- [ ] Technical report on arXiv.
+- [x] Technical report on arXiv ([arXiv:2604.24432](https://arxiv.org/abs/2604.24432)).
 - [ ] Publish pretrained 1.9B checkpoints on Hugging Face.
 - [ ] Release the 4B continual-pretraining recipe and checkpoint.
 - [ ] Expanded evaluation scripts for RULER / NIAH / LongBench v2 reproduction.
@@ -221,7 +258,7 @@ Contributions are welcome — feel free to open an issue or PR.
 
 ## 📜 Citation
 
-*BibTeX will be finalized once the technical report is public.* Placeholder for now:
+If you find KSA useful, please cite our technical report:
 
 ```bibtex
 @techreport{kwai2026ksa,
@@ -229,7 +266,7 @@ Contributions are welcome — feel free to open an issue or PR.
   author      = {OneRec Team},
   year        = {2026},
   institution = {Kuaishou Technology},
-  url         = {https://github.com/Kuaishou-OneRec/KSA}
+  url         = {https://arxiv.org/abs/2604.24432}
 }
 ```
 
