@@ -811,7 +811,7 @@ class Qwen3SummaryAttention(Qwen3Attention):
                     self.summary_chunk_size,
                     self.summary_token_num,
                     self._get_sliding_chunk_num(),
-                    summary_pos=summary_ctx.summary_mask.squeeze()
+                    summary_pos=summary_ctx.summary_mask.squeeze(0)
                 )
         elif query_len == 1:
             # Single text token decode: write to cache, attend to full buffer
