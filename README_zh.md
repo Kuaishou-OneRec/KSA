@@ -248,11 +248,12 @@ python examples/inference/inference.py \
 正在推进:
 
 - [x] 技术报告上 arXiv（[arXiv:2604.24432](https://arxiv.org/abs/2604.24432)）。
-- [ ] Hugging Face 发布 1.9B 预训练 checkpoint。
-- [ ] 放出 4B Continual Pretraining recipe 与 checkpoint。
+- [x] 放出 4B Continual Pretraining recipe 与 checkpoint。
+- [x] 更多消融与教程。
+- [x] 内置 ring-buffer KV cache 的参考推理/Serving 栈。
 - [ ] RULER / NIAH / LongBench v2 复现脚本。
-- [ ] 内置 ring-buffer KV cache 的参考推理/Serving 栈。
-- [ ] 更多消融与教程。
+
+
 
 欢迎 issue / PR。
 
