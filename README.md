@@ -39,6 +39,7 @@ This repository contains:
 
 - **2026-04-28** — KSA technical report is released on arXiv: [arXiv:2604.24432](https://arxiv.org/abs/2604.24432).
 - **2026-04-28** — Code, training recipes, block-sparse kernel, and HuggingFace `trust_remote_code` template are open-sourced under this repository.
+- **2026-05-08** — [KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base) (CPT from Qwen3-4B, 128K context) weights are released on HuggingFace.
 
 ## ✨ Highlights
 
@@ -51,11 +52,11 @@ This repository contains:
 
 ## 🤖 Model Zoo
 
-*Coming soon.* Pretrained checkpoints will be published on Hugging Face once the technical report is released.
+Pretrained checkpoints published on HuggingFace.
 
 | Model         | Backbone    | Parameters | Context | Training              | Link  |
 | :------------ | :---------- | :--------- | :------ | :-------------------- | :---- |
-| KSA-4B (CPT)  | Qwen3-4B    | 4B         | 128k    | Continual pretraining | *TBD* |
+| KSA-4B-base   | Qwen3-4B    | 4B         | 128k    | Continual pretraining | [🤗 OpenOneRec/KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base) |
 
 The 1.9B *from-scratch* configuration is provided as a reproducible recipe only; no 1.9B weights will be released.
 
@@ -248,12 +249,11 @@ The inference path uses HuggingFace's `AutoModelForCausalLM` with `trust_remote_
 We are actively working on:
 
 - [x] Technical report on arXiv ([arXiv:2604.24432](https://arxiv.org/abs/2604.24432)).
-- [x] Release the 4B continual-pretraining recipe and checkpoint.
-- [x] Additional ablations and tutorials([ksa-4b-base](https://huggingface.co/OpenOneRec/KSA-4B-base)).
-- [x] A reference serving stack with the ring-buffer KV cache.
+- [x] Release the 4B continual-pretraining checkpoint ([KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base)).
+- [ ] Publish pretrained 1.9B checkpoints on Hugging Face.
 - [ ] Expanded evaluation scripts for RULER / NIAH / LongBench v2 reproduction.
-
-
+- [ ] A reference serving stack with the ring-buffer KV cache.
+- [ ] Additional ablations and tutorials.
 
 Contributions are welcome — feel free to open an issue or PR.
 
