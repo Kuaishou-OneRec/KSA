@@ -39,6 +39,7 @@
 
 - **2026-04-28** —— KSA 技术报告已发布于 arXiv：[arXiv:2604.24432](https://arxiv.org/abs/2604.24432)。
 - **2026-04-28** —— 训练代码、recipe、块稀疏 kernel 与 HuggingFace `trust_remote_code` 模板在本仓库开源。
+- **2026-05-08** —— [KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base)（Qwen3-4B 续训，128K 上下文）权重已发布在 HuggingFace。
 
 ## ✨ 核心特性
 
@@ -51,11 +52,11 @@
 
 ## 🤖 Model Zoo
 
-*Coming soon.* 技术报告正式发布时,将在 Hugging Face 同步放出预训练 checkpoint。
+HuggingFace 已发布预训练 checkpoint。
 
 | 模型          | Backbone    | 参数量 | Context | 训练方式              | 链接  |
 | :------------ | :---------- | :----- | :------ | :-------------------- | :---- |
-| KSA-4B (CPT)  | Qwen3-4B    | 4B     | 128k    | Continual Pretraining | *TBD* |
+| KSA-4B-base   | Qwen3-4B    | 4B     | 128k    | Continual Pretraining | [🤗 OpenOneRec/KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base) |
 
 1.9B *from-scratch* 配置只作为可复现的训练 recipe 提供,不会发布对应权重。
 
@@ -248,12 +249,10 @@ python examples/inference/inference.py \
 正在推进:
 
 - [x] 技术报告上 arXiv（[arXiv:2604.24432](https://arxiv.org/abs/2604.24432)）。
-- [x] 放出 4B Continual Pretraining recipe 与 checkpoint。
-- [x] 更多消融与教程。
-- [x] 内置 ring-buffer KV cache 的参考推理/Serving 栈。
+- [x] 放出 4B Continual Pretraining checkpoint（[KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base)）。
 - [ ] RULER / NIAH / LongBench v2 复现脚本。
-
-
+- [ ] 内置 ring-buffer KV cache 的参考推理/Serving 栈。
+- [ ] 更多消融与教程。
 
 欢迎 issue / PR。
 
