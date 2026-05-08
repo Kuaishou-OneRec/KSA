@@ -248,11 +248,12 @@ The inference path uses HuggingFace's `AutoModelForCausalLM` with `trust_remote_
 We are actively working on:
 
 - [x] Technical report on arXiv ([arXiv:2604.24432](https://arxiv.org/abs/2604.24432)).
-- [ ] Publish pretrained 1.9B checkpoints on Hugging Face.
-- [ ] Release the 4B continual-pretraining recipe and checkpoint.
+- [x] Release the 4B continual-pretraining recipe and checkpoint.
+- [x] Additional ablations and tutorials([ksa-4b-base](https://huggingface.co/OpenOneRec/KSA-4B-base)).
+- [x] A reference serving stack with the ring-buffer KV cache.
 - [ ] Expanded evaluation scripts for RULER / NIAH / LongBench v2 reproduction.
-- [ ] A reference serving stack with the ring-buffer KV cache.
-- [ ] Additional ablations and tutorials.
+
+
 
 Contributions are welcome — feel free to open an issue or PR.
 
