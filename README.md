@@ -250,7 +250,6 @@ We are actively working on:
 
 - [x] Technical report on arXiv ([arXiv:2604.24432](https://arxiv.org/abs/2604.24432)).
 - [x] Release the 4B continual-pretraining checkpoint ([KSA-4B-base](https://huggingface.co/OpenOneRec/KSA-4B-base)).
-- [ ] Publish pretrained 1.9B checkpoints on Hugging Face.
 - [ ] Expanded evaluation scripts for RULER / NIAH / LongBench v2 reproduction.
 - [ ] A reference serving stack with the ring-buffer KV cache.
 - [ ] Additional ablations and tutorials.
