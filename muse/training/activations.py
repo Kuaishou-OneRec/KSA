@@ -19,12 +19,62 @@ Example:
     >>> # Checkpoint all TransformerEncoderLayer modules
     >>> set_activation_checkpointing(model, auto_wrap_policy={TransformerEncoderLayer})
 """
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import partial
+
 import torch.nn as nn
 
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,
+    checkpoint_wrapper,
 )
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+
+
+_ACTIVATION_CHECKPOINT_RECOMPUTING = ContextVar(
+    "activation_checkpoint_recomputing", default=False
+)
+_ACTIVATION_CHECKPOINT_ACTIVE = ContextVar(
+    "activation_checkpoint_active", default=False
+)
+
+
+@contextmanager
+def _activation_checkpoint_phase(recomputing: bool):
+    active_token = _ACTIVATION_CHECKPOINT_ACTIVE.set(True)
+    recomputing_token = _ACTIVATION_CHECKPOINT_RECOMPUTING.set(recomputing)
+    try:
+        yield
+    finally:
+        _ACTIVATION_CHECKPOINT_RECOMPUTING.reset(recomputing_token)
+        _ACTIVATION_CHECKPOINT_ACTIVE.reset(active_token)
+
+
+def _activation_checkpoint_context_fn():
+    """Mark normal forward and non-reentrant checkpoint recomputation."""
+    return (
+        _activation_checkpoint_phase(False),
+        _activation_checkpoint_phase(True),
+    )
+
+
+def is_activation_checkpoint_recomputing() -> bool:
+    """Whether execution is inside a checkpoint backward recomputation."""
+    return _ACTIVATION_CHECKPOINT_RECOMPUTING.get()
+
+
+def is_activation_checkpoint_active() -> bool:
+    """Whether execution is inside either phase of a checkpointed module.
+
+    Unlike :func:`is_activation_checkpoint_recomputing`, this is also true in
+    the original forward.  Modules can use the distinction to retain small,
+    detached auxiliary results that are cheaper to reuse than to rebuild in
+    the backward recomputation.  Ordinary, non-checkpointed forwards remain
+    false so such ephemeral caches cannot leak between training iterations.
+    """
+    return _ACTIVATION_CHECKPOINT_ACTIVE.get()
+
 
 def set_activation_checkpointing(
     model: nn.Module, auto_wrap_policy, **kwargs
@@ -75,4 +125,14 @@ def set_activation_checkpointing(
     """
     if isinstance(auto_wrap_policy, set):
         auto_wrap_policy = ModuleWrapPolicy(auto_wrap_policy)
+    # The marker is inert for ordinary modules. S-KSA uses it to reuse compact,
+    # detached route/teacher results from the original forward during backward
+    # recomputation; rebuilding those no-grad decisions cannot affect gradients.
+    kwargs.setdefault(
+        "checkpoint_wrapper_fn",
+        partial(
+            checkpoint_wrapper,
+            context_fn=_activation_checkpoint_context_fn,
+        ),
+    )
     apply_activation_checkpointing(model, auto_wrap_policy=auto_wrap_policy, **kwargs)

@@ -495,17 +495,17 @@ def initialize_metrics(acc_steps: int, logging_per_step: int, loggers: List[Logg
 
     # Logging metrics, avg over the last logging_per_step steps
     metrics.logger.track(
-        avg_loss.avg(window=logging_per_step)[::logging_per_step], 
+        avg_loss.avg(window=logging_per_step)[::logging_per_step],
         name="loss", group="training")
     metrics.logger.track(
-        avg_grad_norm.avg(window=logging_per_step)[::logging_per_step], 
+        avg_grad_norm.avg(window=logging_per_step)[::logging_per_step],
         name="grad_norm", group="training")
     metrics.logger.track(
-        learning_rate.avg(window=logging_per_step)[::logging_per_step], 
+        learning_rate.avg(window=logging_per_step)[::logging_per_step],
         name="learning_rate", group="training")
     # Skip first None value from seconds_per_step before final logging slice
     metrics.logger.track(
-        seconds_per_step.avg(window=logging_per_step)[::logging_per_step], 
+        seconds_per_step.avg(window=logging_per_step)[::logging_per_step],
         name="seconds_per_step", group="perf")
     metrics.logger.track(
         total_tokens[::acc_steps][::logging_per_step], 
@@ -514,13 +514,13 @@ def initialize_metrics(acc_steps: int, logging_per_step: int, loggers: List[Logg
         total_samples[::acc_steps][::logging_per_step], 
         name="total_samples", group="perf")
     metrics.logger.track(
-        tokens_per_sec_per_gpu.avg(window=logging_per_step)[::logging_per_step], 
+        tokens_per_sec_per_gpu.avg(window=logging_per_step)[::logging_per_step],
         name="tokens_per_sec_per_gpu", group="perf")
     metrics.logger.track(
-        samples_per_sec_per_gpu.avg(window=logging_per_step)[::logging_per_step], 
+        samples_per_sec_per_gpu.avg(window=logging_per_step)[::logging_per_step],
         name="samples_per_sec_per_gpu", group="perf")
     metrics.logger.track(
-        tokens_per_day.avg(window=logging_per_step)[::logging_per_step], 
+        tokens_per_day.avg(window=logging_per_step)[::logging_per_step],
         name="tokens_per_day", group="perf")
 
     return metrics
@@ -589,6 +589,15 @@ class StepScheduler:
         self.gradient_accumulation_steps = args.gradient_accumulation_steps
         self.logging_per_step = args.logging_per_step
         self.save_checkpoint_per_step = args.save_checkpoint_per_step
+        raw_save_steps = getattr(args, "save_checkpoint_steps", "")
+        if isinstance(raw_save_steps, str):
+            values = [value.strip() for value in raw_save_steps.split(",")]
+            save_steps = [int(value) for value in values if value]
+        else:
+            save_steps = [int(value) for value in (raw_save_steps or [])]
+        if any(step <= 0 for step in save_steps):
+            raise ValueError("save_checkpoint_steps must contain only positive steps")
+        self.save_checkpoint_steps = tuple(sorted(set(save_steps)))
         
         # Internal state tracking
         self._micro_step = 0
@@ -659,6 +668,7 @@ class StepScheduler:
             "gradient_accumulation_steps": self.gradient_accumulation_steps,
             "logging_per_step": self.logging_per_step,
             "save_checkpoint_per_step": self.save_checkpoint_per_step,
+            "save_checkpoint_steps": list(self.save_checkpoint_steps),
             "micro_step": self._micro_step,
             "global_step": self._global_step,
         }
@@ -757,8 +767,14 @@ class StepScheduler:
             # Output:
             # Save at global_step 1000
         """
-        return (
+        periodic_save = (
             self._global_step > 0 and
             self.is_gradient_accumulation_boundary() and
             self._global_step % self.save_checkpoint_per_step == 0
         )
+        milestone_save = (
+            self._global_step > 0 and
+            self.is_gradient_accumulation_boundary() and
+            self._global_step in self.save_checkpoint_steps
+        )
+        return periodic_save or milestone_save

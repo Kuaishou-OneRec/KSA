@@ -267,12 +267,14 @@ def _get_wsd_schedule_lr_lambda(
         current_step: int, *, num_warmup_steps: int,
         num_decay_steps: int,
         num_training_steps: int,
-        min_lr_rate: float = 0.0) -> float:
+        min_lr_rate: float = 0.0,
+        warmup_start_lr_rate: float = 0.0) -> float:
     """
     Compute learning rate multiplier for Warmup-Stable-Decay (WSD) schedule.
 
     Schedule phases:
-    1. Warmup (0 to num_warmup_steps): Linear increase from 0 to 1
+    1. Warmup (0 to num_warmup_steps): Linear increase from
+       warmup_start_lr_rate to 1
     2. Stable (num_warmup_steps to num_training_steps - num_decay_steps): Hold at 1.0
     3. Decay (last num_decay_steps): Linear decrease from 1.0 to min_lr_rate
 
@@ -282,12 +284,15 @@ def _get_wsd_schedule_lr_lambda(
         num_decay_steps (int): Duration of decay phase (last N steps)
         num_training_steps (int): Total number of training steps
         min_lr_rate (float): Minimum LR as fraction of base LR. Defaults to 0.0.
+        warmup_start_lr_rate (float): Initial LR as fraction of base LR.
+            Defaults to 0.0, preserving the original schedule.
 
     Returns:
         float: Learning rate multiplier in range [min_lr_rate, 1.0]
     """
     if current_step < num_warmup_steps:
-        return float(current_step) / float(max(1, num_warmup_steps))
+        progress = float(current_step) / float(max(1, num_warmup_steps))
+        return warmup_start_lr_rate + progress * (1.0 - warmup_start_lr_rate)
     if current_step >= num_training_steps:
         return min_lr_rate
     decay_start = num_training_steps - num_decay_steps
@@ -305,12 +310,15 @@ def get_wsd_scheduler(
     last_epoch: int = -1,
     min_lr: float = None,
     min_lr_rate: float = None,
+    warmup_start_lr: float = None,
+    warmup_start_lr_rate: float = None,
     **kwargs) -> LambdaLR:
     """
     Create a Warmup-Stable-Decay (WSD) learning rate schedule.
 
-    Linearly increases LR from 0 to peak over ``num_warmup_steps``, holds at peak,
-    then linearly decays to ``min_lr`` over the last ``num_decay_steps`` steps.
+    Linearly increases LR from ``warmup_start_lr`` (zero by default) to peak
+    over ``num_warmup_steps``, holds at peak, then linearly decays to ``min_lr``
+    over the last ``num_decay_steps`` steps.
 
     Args:
         optimizer: The optimizer to schedule.
@@ -320,6 +328,8 @@ def get_wsd_scheduler(
         last_epoch: Index of last epoch when resuming. Defaults to -1.
         min_lr: Minimum learning rate (absolute).
         min_lr_rate: Minimum LR as fraction of base LR.
+        warmup_start_lr: Initial warmup learning rate (absolute).
+        warmup_start_lr_rate: Initial warmup LR as fraction of base LR.
 
     Returns:
         LambdaLR with WSD schedule.
@@ -327,10 +337,37 @@ def get_wsd_scheduler(
     if min_lr is not None and min_lr_rate is not None:
         raise ValueError("Only one of min_lr or min_lr_rate should be set")
     elif min_lr is not None:
-        min_lr_rate = min_lr / optimizer.defaults["lr"]
+        base_lr = optimizer.defaults["lr"]
+        if base_lr == 0:
+            if min_lr != 0:
+                raise ValueError("min_lr must be 0 when the optimizer learning rate is 0")
+            min_lr_rate = 0.0
+        else:
+            min_lr_rate = min_lr / base_lr
     elif min_lr_rate is None:
         raise ValueError(
             "One of min_lr or min_lr_rate should be set through the `lr_scheduler_kwargs`"
+        )
+
+    if warmup_start_lr is not None and warmup_start_lr_rate is not None:
+        raise ValueError(
+            "Only one of warmup_start_lr or warmup_start_lr_rate should be set"
+        )
+    if warmup_start_lr is not None:
+        base_lr = optimizer.defaults["lr"]
+        if base_lr == 0:
+            if warmup_start_lr != 0:
+                raise ValueError(
+                    "warmup_start_lr must be 0 when the optimizer learning rate is 0"
+                )
+            warmup_start_lr_rate = 0.0
+        else:
+            warmup_start_lr_rate = warmup_start_lr / base_lr
+    elif warmup_start_lr_rate is None:
+        warmup_start_lr_rate = 0.0
+    if not 0.0 <= warmup_start_lr_rate <= 1.0:
+        raise ValueError(
+            "warmup_start_lr must be between 0 and the optimizer learning rate"
         )
 
     lr_lambda = partial(
@@ -339,6 +376,7 @@ def get_wsd_scheduler(
         num_decay_steps=num_decay_steps,
         num_training_steps=num_training_steps,
         min_lr_rate=min_lr_rate,
+        warmup_start_lr_rate=warmup_start_lr_rate,
     )
 
     return LambdaLR(optimizer, lr_lambda, last_epoch)

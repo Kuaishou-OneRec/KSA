@@ -301,6 +301,13 @@ class Qwen3SummaryAttentionConfig(Qwen3Config):
         default=0,
         description="Number of summary tokens inserted after each chunk."
     )
+    summary_partial_chunk_policy: Literal["legacy", "summarize", "defer"] = Field(
+        default="legacy",
+        description="How to handle a final chunk shorter than summary_chunk_size. "
+                    "'legacy' preserves V1 tail positions; 'summarize' uses the "
+                    "actual tail boundaries and inserts summaries; 'defer' keeps "
+                    "the partial text chunk open until more decode tokens complete it."
+    )
     summary_sliding_chunk_num: Union[int, List[int]] = Field(
         default=0,
         description="Number of previous chunks whose text tokens are visible to current text tokens. "
@@ -375,6 +382,173 @@ class Qwen3SummaryAttentionConfig(Qwen3Config):
                     "'mask' = native PyTorch full-mask mode (F.scaled_dot_product_attention, O(n²) memory), "
                     "'block' = native PyTorch block mode (block-wise compact masks with caching, memory efficient)."
     )
+    summary_block_size: int = Field(
+        default=4096,
+        gt=0,
+        description="Query block size used by native block-mode Summary Attention."
+    )
+    summary_meta_pool_mode: Literal[
+        "none", "mean", "scalar", "dimension_wise"
+    ] = Field(
+        default="none",
+        description="Second-level pooling for summaries outside the local text window. "
+                    "'none' disables pooling, 'mean' uses uniform weights, and "
+                    "'scalar' uses one learned score per summary token. "
+                    "'dimension_wise' learns an independent score for every "
+                    "KV coordinate of every summary token."
+    )
+    summary_meta_pool_group_size: Union[int, List[int]] = Field(
+        default=0,
+        description="Number of old summary entries pooled into one meta KV entry. "
+                    "0 or 1 disables pooling for a layer; int applies to all layers; "
+                    "List[int] configures each layer independently."
+    )
+    summary_meta_pool_position: Literal["group_last"] = Field(
+        default="group_last",
+        description="Position assigned to pooled meta keys after pre-RoPE pooling."
+    )
+    summary_meta_pool_mass_correction: Literal["none", "log_group_size"] = Field(
+        default="none",
+        description="Optional additive attention-logit correction for a meta KV. "
+                    "'log_group_size' preserves the softmax mass of the entries "
+                    "represented by one pooled key when their logits are equal."
+    )
+    summary_meta_pool_anneal: bool = Field(
+        default=False,
+        description="Training-only transition from the original summary-memory "
+                    "attention output to the pooled meta-memory attention output."
+    )
+    summary_meta_pool_anneal_start_iter: int = Field(
+        default=0,
+        ge=0,
+        description="Global iteration at which the summary-memory coefficient "
+                    "starts decaying from 1.0."
+    )
+    summary_meta_pool_anneal_end_iter: int = Field(
+        default=0,
+        ge=0,
+        description="Global iteration at which the summary-memory coefficient "
+                    "reaches 0.0 and only meta memory is used."
+    )
+    summary_meta_pool_distill_attention: bool = Field(
+        default=False,
+        description="Training-only layer-local distillation from the original "
+                    "KSA attention output to the meta-pooled attention output. "
+                    "The pooled output remains the only path consumed by the model."
+    )
+    # Sparse Compressed Summary Attention (S-KSA).  These fields are deliberately
+    # inert unless ``sksa_enabled`` is true so existing KSA/C-KSA configs keep
+    # the exact same module graph and state dict.
+    sksa_enabled: bool = Field(
+        default=False,
+        description="Enable S-KSA routing on explicitly selected dense/full KSA layers.",
+    )
+    sksa_sparse_full_layers: List[int] = Field(
+        default_factory=list,
+        description="Zero-based full-layer indices whose text attention is sparsified.",
+    )
+    sksa_routing_mode: Literal["summary_indexer"] = Field(
+        default="summary_indexer",
+        description="Layer-local summary-query block routing (S-KSA).",
+    )
+    sksa_indexer_token_budget: int = Field(
+        default=2048,
+        gt=0,
+        description="Number of remote original-text tokens retained for each "
+                    "Full-layer query, converted to a whole number of blocks.",
+    )
+    sksa_indexer_query_rank: int = Field(default=256, gt=0)
+    sksa_indexer_heads: int = Field(default=4, gt=0)
+    sksa_indexer_head_dim: int = Field(default=128, gt=0)
+    sksa_indexer_rope_dim: int = Field(
+        default=64,
+        ge=0,
+        description="Trailing Lightning-Indexer dimensions receiving RoPE.",
+    )
+    sksa_indexer_query_block_size: int = Field(
+        default=512,
+        gt=0,
+        description="Execution tile for indexer scoring; routes remain per query.",
+    )
+    sksa_indexer_teacher_query_block_size: int = Field(default=32, gt=0)
+    sksa_indexer_teacher_pooling: Literal["max", "sum"] = Field(
+        default="max",
+        description="Pool dense raw-token attention into one teacher score per "
+                    "summary block. Max is the QSA-style default.",
+    )
+    sksa_indexer_summary_key_source: Literal[
+        "input_summary", "chunk_attention"
+    ] = Field(
+        default="input_summary",
+        description="Input used to build each summary-block index key. "
+                    "input_summary projects summary hidden states directly; "
+                    "chunk_attention lets the current Full "
+                    "layer's summary query aggregate its raw block through "
+                    "the configured auxiliary Q/K/V projections. This "
+                    "auxiliary aggregation is detached from the backbone.",
+    )
+    sksa_indexer_chunk_attention_qk_source: Literal[
+        "backbone", "independent"
+    ] = Field(
+        default="backbone",
+        description="Q/K projections used by the auxiliary chunk-attention "
+                    "summary-key path. 'backbone' preserves the existing "
+                    "frozen Full-layer Q/K; 'independent' creates trainable "
+                    "indexer-local Q/K and Q/K RMSNorm.",
+    )
+    sksa_indexer_chunk_attention_v_source: Literal[
+        "backbone", "independent"
+    ] = Field(
+        default="backbone",
+        description="Values aggregated by auxiliary chunk attention: backbone V "
+                    "or an independent trainable value projection.",
+    )
+    sksa_indexer_chunk_attention_include_summary: bool = Field(
+        default=True,
+        description="Include the Summary's own K/V in whole-chunk index-key "
+                    "aggregation. False uses only raw-text K/V at every block "
+                    "size and requires independent chunk Q/K. The Summary "
+                    "still supplies the query.",
+    )
+    sksa_indexer_scorer_backend: Literal["torch", "fused", "auto"] = Field(
+        default="torch",
+        description="Backend for Lightning-Indexer candidate scoring. Torch "
+                    "preserves the reference implementation, fused selects the "
+                    "dedicated kernel, and auto may choose either at runtime.",
+    )
+    sksa_indexer_block_size: Literal[2, 4, 8] = Field(
+        default=8,
+        description="Raw tokens per indexer key/selected block; independent of "
+                    "summary insertion interval.",
+    )
+    sksa_indexer_force_sink: bool = Field(
+        default=True,
+        description="Force the leading routing candidates into every non-empty "
+                    "remote budget.",
+    )
+    sksa_indexer_summary_sink_tokens: int = Field(
+        default=8,
+        gt=0,
+        description="Leading raw tokens forced into summary-indexer routes; "
+                    "independent of summary insertion interval and included in the remote budget.",
+    )
+    sksa_apply_sparse_attention: bool = Field(
+        default=True,
+        description="Apply the selected raw-block sparse Full attention. Dense "
+                    "indexer warm-up overrides this to false.",
+    )
+    sksa_indexer_distill_attention: bool = Field(
+        default=False,
+        description="Return the layer-local Lightning-Indexer KL objective.",
+    )
+    sksa_local_window_tokens: int = Field(
+        default=1024,
+        gt=0,
+        description="Nominal always-visible causal local window in original-text "
+                    "tokens. Summary-indexer routing aligns its left edge down "
+                    "to a raw summary-block boundary, so its effective span may "
+                    "be up to summary_chunk_size-1 tokens longer.",
+    )
     enable_summary_distill_attention: bool = Field(
         default=False,
         description="Collect per-layer attention outputs for distillation."
@@ -397,13 +571,169 @@ class Qwen3SummaryAttentionConfig(Qwen3Config):
             return self.summary_independent_qkv
         return self.summary_independent_parameters
 
-    @field_validator("summary_layer_freq", "summary_sliding_chunk_num", mode="before")
+    @field_validator(
+        "summary_layer_freq",
+        "summary_sliding_chunk_num",
+        "summary_meta_pool_group_size",
+        mode="before",
+    )
     @classmethod
     def parse_pattern_string(cls, v):
         """Parse pattern strings like '([1]*3+[0]*1)*9' into List[int]."""
         if isinstance(v, str) and '[' in v:
             return _eval_pattern(v)
         return v
+
+    @model_validator(mode="after")
+    def validate_meta_pooling(self) -> "Qwen3SummaryAttentionConfig":
+        sizes = self.summary_meta_pool_group_size
+        if isinstance(sizes, list):
+            if len(sizes) != self.num_layers:
+                raise ValueError(
+                    f"summary_meta_pool_group_size list length ({len(sizes)}) != "
+                    f"num_layers ({self.num_layers})"
+                )
+            active_sizes = sizes
+        else:
+            active_sizes = [sizes]
+
+        if any(size < 0 for size in active_sizes):
+            raise ValueError("summary_meta_pool_group_size values must be non-negative")
+
+        pooling_active = (
+            self.summary_meta_pool_mode != "none"
+            and any(size > 1 for size in active_sizes)
+        )
+        if pooling_active:
+            if self.summary_token_num != 1:
+                raise ValueError(
+                    "Hierarchical summary pooling currently requires summary_token_num=1"
+                )
+            if self.summary_attention_mode not in {"block", "kernel"}:
+                raise ValueError(
+                    "Hierarchical summary pooling currently requires "
+                    "summary_attention_mode='block' or 'kernel'"
+                )
+        if self.summary_meta_pool_anneal:
+            if not pooling_active:
+                raise ValueError(
+                    "summary_meta_pool_anneal requires active hierarchical "
+                    "summary pooling"
+                )
+            if (
+                self.summary_meta_pool_anneal_end_iter
+                <= self.summary_meta_pool_anneal_start_iter
+            ):
+                raise ValueError(
+                    "summary_meta_pool_anneal_end_iter must be greater than "
+                    "summary_meta_pool_anneal_start_iter"
+                )
+        if self.summary_meta_pool_distill_attention:
+            if not pooling_active:
+                raise ValueError(
+                    "summary_meta_pool_distill_attention requires active "
+                    "hierarchical summary pooling"
+                )
+            if self.summary_meta_pool_anneal:
+                raise ValueError(
+                    "summary_meta_pool_distill_attention cannot be combined "
+                    "with summary_meta_pool_anneal"
+                )
+
+        if self.sksa_enabled:
+            if not self.sksa_sparse_full_layers:
+                raise ValueError(
+                    "sksa_enabled requires at least one sksa_sparse_full_layers entry"
+                )
+            if len(set(self.sksa_sparse_full_layers)) != len(
+                self.sksa_sparse_full_layers
+            ):
+                raise ValueError("sksa_sparse_full_layers must not contain duplicates")
+            if self.summary_chunk_position_ids_type != "origin":
+                raise ValueError(
+                    "S-KSA currently requires summary_chunk_position_ids_type='origin'"
+                )
+            if self.summary_token_num != 1:
+                raise ValueError("S-KSA currently requires summary_token_num=1")
+            if (
+                self.sksa_indexer_chunk_attention_qk_source == "independent"
+                and (
+                    (self.sksa_indexer_summary_key_source != 'chunk_attention')
+                )
+            ):
+                raise ValueError(
+                    "independent chunk Q/K requires "
+                    "summary-indexer routing with "
+                    "sksa_indexer_summary_key_source='chunk_attention'"
+                )
+            if (
+                self.sksa_indexer_chunk_attention_v_source in {"independent"}
+                and self.sksa_indexer_chunk_attention_qk_source != "independent"
+            ):
+                raise ValueError("independent chunk V requires independent chunk Q/K")
+            if (
+                (not self.sksa_indexer_chunk_attention_include_summary and self.sksa_indexer_chunk_attention_qk_source != 'independent')
+            ):
+                raise ValueError("raw-only chunk attention requires independent chunk Q/K")
+            if self.summary_meta_pool_anneal:
+                raise ValueError("S-KSA cannot be combined with meta-pool annealing")
+            if self.summary_meta_pool_distill_attention:
+                raise ValueError("S-KSA cannot be combined with meta-pool distillation")
+
+            allowed_chunks = ((4, 8))
+            if self.summary_chunk_size not in allowed_chunks:
+                raise ValueError(
+                    "S-KSA requires chunk4/8"
+                )
+            if self.summary_chunk_size % self.sksa_indexer_block_size:
+                raise ValueError("indexer block size must divide the summary interval")
+            if self.sksa_indexer_summary_sink_tokens % self.sksa_indexer_block_size:
+                raise ValueError("summary sink tokens must cover whole indexer blocks")
+            if self.sksa_indexer_block_size < self.summary_chunk_size:
+                if self.sksa_indexer_chunk_attention_qk_source != "independent":
+                    raise ValueError("subchunk indexer blocks require independent chunk Q/K")
+                if self.sksa_local_window_tokens < self.summary_chunk_size:
+                    raise ValueError("subchunk indexer requires a local window >= summary_chunk_size")
+            if self.sksa_indexer_token_budget % self.sksa_indexer_block_size:
+                raise ValueError(
+                    "sksa_indexer_token_budget must be divisible by "
+                    "sksa_indexer_block_size"
+                )
+            if (
+                (self.sksa_indexer_force_sink and self.sksa_indexer_token_budget < self.sksa_indexer_summary_sink_tokens)
+            ):
+                raise ValueError("indexer token budget must cover the summary sink tokens")
+            if self.sksa_indexer_rope_dim > self.sksa_indexer_head_dim:
+                raise ValueError(
+                    "sksa_indexer_rope_dim cannot exceed indexer_head_dim"
+                )
+            if self.sksa_indexer_rope_dim % 2:
+                raise ValueError("sksa_indexer_rope_dim must be even")
+
+            layer_is_summary = self.get_layer_is_summary()
+            for target in self.sksa_sparse_full_layers:
+                if not 0 <= target < self.num_layers:
+                    raise ValueError(f"S-KSA full layer {target} is out of range")
+                if not layer_is_summary[target]:
+                    raise ValueError(
+                        "Sparse routing targets KSA full layers; "
+                        f"layer {target} is configured as a summary-bypass layer"
+                    )
+                if self.get_layer_meta_pool_group_size(target) > 1:
+                    raise ValueError(
+                        f"S-KSA target layer {target} is compressed, not a full layer"
+                    )
+                covered_tokens = (
+                    self.get_layer_sliding_chunk_num(target)
+                    * self.summary_chunk_size
+                )
+                if covered_tokens < self.max_seq_len:
+                    raise ValueError(
+                        f"S-KSA target layer {target} is not globally dense: its "
+                        f"configured window covers {covered_tokens} < {self.max_seq_len} tokens"
+                    )
+
+        return self
 
     def get_layer_is_summary(self) -> List[bool]:
         """Return per-layer bool indicating whether the layer uses summary attention.
@@ -435,5 +765,24 @@ class Qwen3SummaryAttentionConfig(Qwen3Config):
             )
             return val[layer_idx]
         return val
+    def get_layer_meta_pool_group_size(self, layer_idx: int) -> int:
+        """Return the second-level summary pooling group size for one layer."""
+        val = self.summary_meta_pool_group_size
+        if isinstance(val, list):
+            assert len(val) == self.num_layers, (
+                f"summary_meta_pool_group_size list length ({len(val)}) != "
+                f"num_layers ({self.num_layers})"
+            )
+            return val[layer_idx]
+        return val
 
 
+    def get_sksa_indexer_topk_blocks(self) -> int:
+        """Convert the configured raw-token budget to summary-block top-k."""
+        return (
+            self.sksa_indexer_token_budget + self.sksa_indexer_block_size - 1
+        ) // self.sksa_indexer_block_size
+
+    def get_sksa_indexer_topk_candidates(self) -> int:
+        """Return the route-slot count for the configured Indexer mode."""
+        return self.get_sksa_indexer_topk_blocks()

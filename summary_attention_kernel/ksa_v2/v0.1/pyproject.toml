@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ksa_attn"
+version = "0.7.0"
+
+[tool.setuptools]
+packages = ["ksa_attn"]
+package-dir = {"ksa_attn" = "ksa_attn"}

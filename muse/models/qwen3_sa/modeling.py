@@ -1,5 +1,5 @@
 """
-Qwen3 Summary Attention Model@ccl.
+Qwen3 Summary Attention Model.
 
 Contains:
 - SummaryTransformerSelfAttentionLayer: handles tuple return from SummaryQwen3Attention
@@ -103,19 +103,22 @@ class SummaryTransformerSelfAttentionLayer(TransformerSelfAttentionLayer):
         # Attention
         attn_result = self.attn(h, h, mask=mask, input_pos=input_pos, **kwargs)
 
-        # SummaryQwen3Attention returns (output, distill_out)
+        # SummaryQwen3Attention returns either (output, distill_out) for the
+        # existing full-attention distillation recipe, (output, scalar MSE)
+        # for layer-local meta-pool distillation, or (output, scalar Indexer
+        # objective) for summary Indexer warm-up.
         if isinstance(attn_result, tuple):
-            attn_out, distill_out = attn_result
+            attn_out, attention_aux = attn_result
         else:
-            attn_out, distill_out = attn_result, None
+            attn_out, attention_aux = attn_result, None
 
         # Residual + MLP
         h = self.sa_scale(attn_out) + x
         mlp_out = self.mlp(self.mlp_norm(h))
         out = h + self.mlp_scale(mlp_out)
 
-        if distill_out is not None:
-            return out, distill_out
+        if attention_aux is not None:
+            return out, attention_aux
         return out
 
 
@@ -129,6 +132,8 @@ class FullAttentionLayerWithSummaryBypass(TransformerSelfAttentionLayer):
     Summary tokens are filtered out before attention+MLP and restored via
     identity mapping afterwards. Text tokens use standard causal attention
     without seeing summary tokens.
+
+    Aligns with kai-megatron transformer_layer.py need_filter logic.
     """
 
     def forward(
@@ -181,9 +186,25 @@ class SummaryTransformerDecoder(TransformerDecoder):
     - Summary token filtering before output layer
     """
 
-    def __init__(self, *, enable_distill: bool = False, **kwargs):
+    def __init__(
+        self,
+        *,
+        enable_distill: bool = False,
+        enable_meta_pool_distill: bool = False,
+        enable_sksa_distill: bool = False,
+        summary_config: Optional[Qwen3SummaryAttentionConfig] = None,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self._enable_distill = enable_distill
+        self._enable_meta_pool_distill = enable_meta_pool_distill
+        self._enable_sksa_distill = enable_sksa_distill
+        self._summary_config = summary_config
+        self._log_attn_stats = False
+
+    def set_log_attn_stats(self, enabled: bool) -> None:
+        """Collect S-KSA routing diagnostics during the next forward only."""
+        self._log_attn_stats = bool(enabled)
 
     def forward(
         self,
@@ -209,10 +230,19 @@ class SummaryTransformerDecoder(TransformerDecoder):
 
         hidden = []
         attn_outputs = [] if self._enable_distill else None
+        structural_losses = (
+            []
+            if self._enable_meta_pool_distill or self._enable_sksa_distill
+            else None
+        )
+        attn_stats = (
+            [{} for _ in self.layers] if self._log_attn_stats else None
+        )
 
         for i, layer in enumerate(self.layers):
             if i in self.output_hidden_states:
                 hidden.append(h)
+
 
             result = layer(
                 h,
@@ -225,17 +255,22 @@ class SummaryTransformerDecoder(TransformerDecoder):
             )
 
             if isinstance(result, tuple):
-                h, distill_out = result
-                if attn_outputs is not None and distill_out is not None:
-                    # Filter out summary positions from distill output
-                    if summary_ctx is not None:
-                        text_mask = ~summary_ctx.summary_mask
-                        distill_out = distill_out[text_mask].view(
-                            h.shape[0], -1, h.shape[-1]
-                        )
-                    attn_outputs.append(distill_out)
+                h, attention_aux = result
             else:
                 h = result
+                attention_aux = None
+
+
+            if structural_losses is not None and attention_aux is not None:
+                structural_losses.append(attention_aux)
+            elif attn_outputs is not None and attention_aux is not None:
+                # Filter out summary positions from distill output
+                if summary_ctx is not None:
+                    text_mask = ~summary_ctx.summary_mask
+                    attention_aux = attention_aux[text_mask].view(
+                        h.shape[0], -1, h.shape[-1]
+                    )
+                attn_outputs.append(attention_aux)
 
         if len(self.layers) in self.output_hidden_states:
             hidden.append(h)
@@ -251,6 +286,10 @@ class SummaryTransformerDecoder(TransformerDecoder):
         # Build return value
         if hidden:
             output = [*hidden, output]
+        if structural_losses:
+            return output, torch.stack(structural_losses).mean()
+        if attn_stats is not None:
+            return output, attn_outputs, attn_stats
         if attn_outputs:
             return output, attn_outputs
         return output
@@ -365,11 +404,45 @@ class Qwen3SummaryModel(Model):
             norm=RMSNorm(dim=config.embed_dim, eps=config.norm_eps),
             output=output_proj,
             enable_distill=config.enable_summary_distill_attention,
+            enable_meta_pool_distill=(
+                config.summary_meta_pool_distill_attention
+            ),
+            enable_sksa_distill=config.sksa_indexer_distill_attention,
+            summary_config=config,
         )
 
         # Summary embedding (independent parameters)
         if config.summary_independent_parameters:
             self.summary_embedding = nn.Embedding(config.summary_token_num, config.embed_dim)
+
+    def set_log_attn_stats(self, enabled: bool) -> None:
+        """Delegate logging-boundary route diagnostics to the decoder."""
+        self.model.set_log_attn_stats(enabled)
+
+    @torch.no_grad()
+    def initialize_sksa_indexer_chunk_qk_from_backbone(self) -> int:
+        """Initialize independent S-KSA chunk Q/K from each layer's backbone.
+
+        This is intentionally a post-checkpoint-load operation.  The source
+        checkpoint predates the Indexer-local chunk Q/K parameters, while the
+        corresponding backbone projections are present in every target layer.
+
+        Returns:
+            Number of target layers whose independent chunk Q/K was copied.
+        """
+        copied_layers = 0
+        for layer in self.model.layers:
+            attention = getattr(layer, "attn", None)
+            if attention is None:
+                continue
+            initialize = getattr(
+                attention,
+                "initialize_sksa_indexer_chunk_qk_from_backbone",
+                None,
+            )
+            if initialize is not None and initialize():
+                copied_layers += 1
+        return copied_layers
 
     def forward(
         self,
@@ -400,6 +473,11 @@ class Qwen3SummaryModel(Model):
 
     def get_initializer(self, name: str) -> Callable[[torch.Tensor], None]:
         """Return an initializer function for the given parameter name."""
+        if name.endswith(("meta_pool_position_bias", "meta_pool_scorer.weight")):
+            return init.zeros_
+        if ".sksa_indexer." in name and name.endswith(".weight"):
+            return init.xavier_uniform_
+
         module_name = name.rsplit(".", 1)[0]
         param_suffix = name.rsplit(".", 1)[1] if "." in name else ""
 
@@ -665,5 +743,3 @@ class Qwen3SummaryModel(Model):
 
     def get_checkpointable_module_classes(self):
         return {SummaryTransformerSelfAttentionLayer, FullAttentionLayerWithSummaryBypass}
-
-    

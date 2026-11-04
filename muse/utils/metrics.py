@@ -84,16 +84,24 @@ class LoggerBackend(ABC):
 class TensorBoardBackend(LoggerBackend):
     """TensorBoard logging backend using torch.utils.tensorboard."""
     
-    def __init__(self, log_dir: str):
+    def __init__(self, log_dir: Optional[str] = None, writer=None):
         """
         Initialize TensorBoard backend.
         
         Args:
-            log_dir: Directory to write TensorBoard logs
+            log_dir: Directory to write TensorBoard logs when creating a writer
+            writer: Existing SummaryWriter to reuse
         """
-        from torch.utils.tensorboard import SummaryWriter
-        self.writer = SummaryWriter(log_dir=log_dir)
-        self.log_dir = log_dir
+        if writer is None:
+            if log_dir is None:
+                raise ValueError("log_dir is required when writer is not provided")
+            from torch.utils.tensorboard import SummaryWriter
+            writer = SummaryWriter(log_dir=log_dir)
+            self._owns_writer = True
+        else:
+            self._owns_writer = False
+        self.writer = writer
+        self.log_dir = log_dir or getattr(writer, "log_dir", None)
     
     def write(self, step: int, values: Dict[str, Dict[str, Any]]):
         """Write metrics to TensorBoard."""
@@ -107,7 +115,10 @@ class TensorBoardBackend(LoggerBackend):
     
     def close(self):
         """Close TensorBoard writer."""
-        self.writer.close()
+        if self._owns_writer:
+            self.writer.close()
+        else:
+            self.writer.flush()
 
 
 class WandbBackend(LoggerBackend):

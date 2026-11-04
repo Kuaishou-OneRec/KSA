@@ -1,6 +1,9 @@
 """
 Summary Attention Context Data Structures.
 
+Ported from kai-megatron/megatron/core/models/qwen3_next/summary_context.py,
+adapted for muse's [b, s] tensor layout. No Megatron dependencies.
+
 Provides:
 - SummaryChunkMeta: per-chunk position metadata
 - SummarySampleContext: per-sample chunk list
@@ -162,8 +165,75 @@ class SummaryBatchContext:
     attention_mode: str = "mask"  # "mask" or "chunk"
     curr_iteration: int = 0
 
+    # Training-only Summary Indexer objective controls.  These live on the
+    # batch context rather than the model config because they are an
+    # experiment-specific loss choice and do not change parameter shapes or
+    # exported runtime behavior.
+    sksa_indexer_kl_factor: float = 1.0
+    sksa_indexer_full_candidate_kl: bool = False
+    sksa_indexer_monitor_topk_blocks: int = 0
+
+    # Detached per-target-layer diagnostics populated during the original
+    # forward.  Activation-checkpoint recomputation deliberately does not
+    # append a second copy.  The training recipe averages these values for
+    # logging while only the scalar structural objective is backpropagated.
+    _sksa_indexer_kl_diagnostics: List[torch.Tensor] = field(
+        default_factory=list, repr=False
+    )
+    _sksa_indexer_oracle_topk_recall_diagnostics: List[torch.Tensor] = field(
+        default_factory=list, repr=False
+    )
+    _sksa_indexer_selected_attention_mass_diagnostics: List[torch.Tensor] = field(
+        default_factory=list, repr=False
+    )
+    _sksa_indexer_oracle_topk_attention_mass_diagnostics: List[torch.Tensor] = field(
+        default_factory=list, repr=False
+    )
+    _sksa_indexer_selected_oracle_attention_mass_ratio_diagnostics: List[
+        torch.Tensor
+    ] = field(default_factory=list, repr=False)
+
+    # Training-only per-microbatch override.  ``None`` preserves the model
+    # config, while ``False`` skips the expensive Indexer teacher/KL path but
+    # still computes hard routes and sparse attention.  Runtime callers never
+    # set this field.
+    sksa_indexer_distill_active: Optional[bool] = None
+
+    # Static, batch-uniform layout metadata computed while inserting summaries.
+    # Passing this through the model avoids synchronizing CUDA tensors merely to
+    # rediscover the summary count and whether the final token is a summary in
+    # every attention layer (and again during checkpoint recomputation).
+    summary_layout_signature: Optional[Tuple[int, bool]] = None
+    summary_layout_validated: bool = False
+
     # Cached data for block-wise attention (to avoid recomputation)
     _block_attn_cache: Dict = field(default_factory=dict)
+
+    # Detached Summary-Lightning routes/teacher targets (sparse), or compact
+    # per-tile KL/diagnostic scalars (dense), retained only between
+    # the original forward of a checkpointed Full layer and its backward
+    # recomputation.  Values are stacks keyed by layer index so repeated
+    # forwards over the same context remain LIFO-correct.  This cache is never
+    # serialized and ordinary non-checkpointed forwards do not populate it.
+    _sksa_indexer_checkpoint_cache: Dict = field(
+        default_factory=dict, repr=False
+    )
+
+    # Optional training-only speed cache for token-sparse Full layers under
+    # non-reentrant activation checkpointing.  Each entry retains the
+    # detached BF16 attention output and FP32 LSE from the real forward until
+    # that layer is recomputed in backward, avoiding a duplicate sparse
+    # attention forward at a modest, bounded memory cost.
+
+    # All-token Indexer supervision can reuse the exact text-row LSE produced
+    # by its detached Full-attention teacher.  During dense warm-up that teacher
+    # is also the main path; during sparse CPT its output is discarded.  Keep
+    # only the compact, detached [B,H,text] LSE (or a None fallback sentinel)
+    # until the enclosing layer's checkpoint recomputation consumes it.  As
+    # above, each layer owns a LIFO stack and ordinary forwards retain nothing.
+    _sksa_dense_teacher_lse_checkpoint_cache: Dict = field(
+        default_factory=dict, repr=False
+    )
 
     @property
     def enabled(self) -> bool:

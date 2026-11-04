@@ -1,0 +1,10 @@
+{
+  "name": "KaiMMapDataset",
+  "data_prefix": [1.0, "data/common_knowledge__fineweb_edu"],
+  "seq_length": 131072,
+  "seed": 1024,
+  "seeded_sampling": true,
+  "global_batch_size": 32,
+  "skip_warmup": true,
+  "num_workers": 1
+}

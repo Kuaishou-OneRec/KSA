@@ -1,8 +1,8 @@
-# Kwai Summary Attention — reference training / inference image.
+# KSA V1 training / inference image. V2 has its own installer.
 #
 # This Dockerfile builds a reproducible software stack using public upstream
 # wheels (torch 2.6.0 + cu126) so the image builds on any host with a recent
-# enough NVIDIA driver (>= 535).
+# NVIDIA driver compatible with the CUDA 12.6 base image.
 #
 # Build:
 #   docker build -t ksa-train -f dockerfile/Dockerfile .
@@ -29,22 +29,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 RUN python -m pip install --upgrade pip setuptools wheel ninja build packaging
 
 # PyTorch 2.6.0 matched to CUDA 12.6 (public index).
 RUN pip install --index-url https://download.pytorch.org/whl/cu126 \
-        torch==2.6.0 \
-        torchvision==0.21.0
+        torch==2.6.0
 
 # FlashAttention-2 (builds against the torch installed above).
 RUN MAX_JOBS=16 pip install flash-attn==2.7.4.post1 --no-build-isolation
 
-# Full training / inference / serving stack — see dockerfile/requirements.txt.
+# V1 training / inference dependencies; optional serving stacks are excluded.
 COPY dockerfile/requirements.txt /tmp/ksa_requirements.txt
 RUN pip install -r /tmp/ksa_requirements.txt && rm -f /tmp/ksa_requirements.txt
 
-# Summary Attention block-sparse kernel + flash-attn-cute (wheels shipped in the repo).
-COPY summary_attention_kernel/*.whl /tmp/ksa/
-RUN pip install /tmp/ksa/*.whl && rm -rf /tmp/ksa
+# Shared KSA / C-KSA / S-KSA kernel and its CuTe dependency.
+COPY summary_attention_kernel/ksa_v2/v0.1 /tmp/ksa_kernel/
+RUN pip install --no-deps /tmp/ksa_kernel/wheels/*.whl \
+    && pip install --no-deps --no-build-isolation /tmp/ksa_kernel \
+    && rm -rf /tmp/ksa_kernel
 
 WORKDIR /workspace
