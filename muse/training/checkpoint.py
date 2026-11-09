@@ -62,6 +62,7 @@ from torch.distributed.checkpoint import (
 )
 
 from torch.distributed.checkpoint.metadata import Metadata, STATE_DICT_TYPE
+from torch.distributed.checkpoint.default_planner import DefaultLoadPlanner
 import torch.distributed.checkpoint as dcp
 from torch.distributed.checkpoint.stateful import Stateful
 from torch.distributed.checkpoint.state_dict import get_state_dict, set_state_dict
@@ -177,11 +178,15 @@ def load_hf_checkpoint(model_dir: str) -> Dict[str, torch.Tensor]:
     ckpt_paths = sorted(glob.glob(os.path.join(model_dir, "*.safetensors")))
     if not ckpt_paths:
         ckpt_paths = sorted(glob.glob(os.path.join(model_dir, "*.bin")))
+    if not ckpt_paths:
+        raise FileNotFoundError(f"No HF weight shards found in {model_dir}")
     # _checkpoint_paths are already sorted so simply enumerate to generate the right id
     for cpt_idx, cpt_path in enumerate(ckpt_paths):
         print_rank_0(f"Load checkpoints: {cpt_idx}/{len(ckpt_paths)}")
         state_dict = safe_torch_load(cpt_path)
         for key, value in state_dict.items():
+            if key in merged_state_dict:
+                raise ValueError(f"Duplicate HF tensor across shards: {key}")
             # Ensure that the state dict is a flat dict of keys and tensors. Breaking this assumption
             # will break recipe code
             if not isinstance(value, torch.Tensor):
@@ -322,7 +327,10 @@ class DistributedCheckpointer(CheckpointerInterface):
 
   def load_checkpoint(self,
                       state_dict: STATE_DICT_TYPE,
-                      checkpoint_path: str) -> Dict[str, Any]:
+                      checkpoint_path: str,
+                      allow_random_init_params: Optional[
+                          Union[str, List[str]]
+                      ] = None) -> Dict[str, Any]:
     """
     Load a Distributed checkpoint saved at the <checkpoint_path>
     If no path is provided, latest intermediate checkpoint is loaded.
@@ -330,9 +338,68 @@ class DistributedCheckpointer(CheckpointerInterface):
 
     print_rank_0(f"Loading checkpoint from {checkpoint_path}")
 
+    if isinstance(allow_random_init_params, str):
+      allowed_names = [
+          name.strip()
+          for name in allow_random_init_params.split(",")
+          if name.strip()
+      ]
+    else:
+      allowed_names = [
+          name.strip()
+          for name in (allow_random_init_params or [])
+          if name.strip()
+      ]
+
+    storage_reader = FileSystemReader(checkpoint_path)
+    planner = None
+    if allowed_names:
+      app_state = state_dict.get("app")
+      if app_state is None or not hasattr(app_state, "state_dict"):
+        raise TypeError(
+            "allow_random_init_params requires state_dict['app'] to be Stateful"
+        )
+      target_model_state = app_state.state_dict().get("model")
+      if not isinstance(target_model_state, dict):
+        raise TypeError(
+            "allow_random_init_params requires app.state_dict()['model']"
+        )
+
+      checkpoint_metadata = storage_reader.read_metadata().state_dict_metadata
+      checkpoint_model_keys = {
+          key.removeprefix("app.model.")
+          for key in checkpoint_metadata
+          if key.startswith("app.model.")
+      }
+      missing_model_keys = sorted(
+          set(target_model_state) - checkpoint_model_keys
+      )
+      disallowed_missing_keys = [
+          key
+          for key in missing_model_keys
+          if not any(
+              key == allowed_name or key.endswith(f".{allowed_name}")
+              for allowed_name in allowed_names
+          )
+      ]
+      if disallowed_missing_keys:
+        raise RuntimeError(
+            "Checkpoint is missing model parameters that were not explicitly "
+            "allowed to keep their initialized values: "
+            f"{disallowed_missing_keys}"
+        )
+
+      if missing_model_keys:
+        print_rank_0(
+            "Keeping explicitly allowed parameters at their initialized "
+            f"values ({len(missing_model_keys)} keys): {missing_model_keys}"
+        )
+        planner = DefaultLoadPlanner(allow_partial_load=True)
+
     dcp.load(
       state_dict=state_dict,
-      storage_reader=FileSystemReader(checkpoint_path),
+      storage_reader=storage_reader,
+      planner=planner,
       process_group=self._process_group,
     )
 
@@ -541,7 +608,9 @@ class AppState(Stateful):
             Dict[str, Any]: State dict containing "model" and optionally "optim" keys
         """
         if self.skip_optimizer:
-            model_state_dict, _ = get_state_dict(self.model, self.optimizer)
+            # Request weights only. Passing a fresh optimizer here makes DCP
+            # initialize Adam with a dummy step even though it will not be loaded.
+            model_state_dict, _ = get_state_dict(self.model, [])
             return {
                 "model": model_state_dict,
                 "training": self._serialize_training_state(self.training_state),
@@ -640,7 +709,12 @@ def save_checkpoint(
 DATALOADER_STATE_FILENAME = "dataloader_state.pt"
 
 
-def save_dataloader_state(dataset, checkpoint_dir: str, global_step: int) -> None:
+def save_dataloader_state(
+    dataset,
+    checkpoint_dir: str,
+    global_step: int,
+    consumer_batches: Optional[int] = None,
+) -> None:
     """Save dataloader state to a separate file (independent of DCP).
 
     Only rank 0 saves. The file is written inside the checkpoint directory
@@ -652,29 +726,32 @@ def save_dataloader_state(dataset, checkpoint_dir: str, global_step: int) -> Non
     if checkpoint_path is None:
         return
     if dist.get_rank() == 0:
-        state = dataset.state_dict()
+        state = (dataset.state_dict() if consumer_batches is None
+                 else dataset.state_dict(consumer_batches=consumer_batches))
         torch.save(state, os.path.join(checkpoint_path, DATALOADER_STATE_FILENAME))
     dist.barrier()
 
 
-def load_dataloader_state(dataset, checkpoint_dir: str, checkpoint_id: str) -> bool:
-    """Load dataloader state from a separate file with soft matching.
+def load_dataloader_state(
+    dataset, checkpoint_dir: str, checkpoint_id: str, *, return_kind: bool = False
+) -> Union[bool, Optional[str]]:
+    """Load dataloader state from a separate file.
 
-    New datasets (present in current config but absent from checkpoint) start
-    from position 0.  Removed datasets (in checkpoint but not in current
-    config) are silently ignored — this is handled by the dataset's own
-    ``load_state_dict`` (Megatron-style soft matching).
+    ``consumer_boundary_v1`` states validate a sampling-config fingerprint and
+    restore the exact pre-prefetch consumer boundary. Legacy states retain the
+    prior Megatron-style soft source matching semantics.
 
-    Returns True if state was loaded, False otherwise.
+    Returns the V1 boolean result by default. V2 can request the state kind
+    (or ``None`` when missing) with ``return_kind=True``.
     """
     if not getattr(dataset, "supports_dataloader_resume", False):
-        return False
+        return None if return_kind else False
     checkpoint_path = get_checkpoint_path(checkpoint_dir, checkpoint_id)
     if checkpoint_path is None:
-        return False
+        return None if return_kind else False
     state_file = os.path.join(checkpoint_path, DATALOADER_STATE_FILENAME)
     if not os.path.isfile(state_file):
-        return False
+        return None if return_kind else False
     state = torch.load(state_file, map_location="cpu", weights_only=False)
     dataset.load_state_dict(state)
-    return True
+    return state.get("state_kind", "legacy_soft") if return_kind else True

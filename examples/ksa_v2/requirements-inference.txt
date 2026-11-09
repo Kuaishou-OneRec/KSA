@@ -1,0 +1,12 @@
+# Python 3.12. Install Torch from the appropriate CUDA wheel index.
+torch==2.6.0
+triton==3.2.0
+transformers==5.0.0
+accelerate==1.9.0
+safetensors==0.7.0
+einops==0.8.1
+nvidia-cutlass-dsl==4.3.5
+cuda-python==12.9.0
+apache-tvm-ffi==0.1.13.post3
+torch-c-dlpack-ext==0.1.4
+quack-kernels==0.2.4

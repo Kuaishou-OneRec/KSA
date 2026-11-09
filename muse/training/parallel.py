@@ -203,9 +203,13 @@ def get_data_parallel_group() -> dist.ProcessGroup:
     return _DATA_PARALLEL_GROUP
 
 def get_data_parallel_rank() -> int:
+    if not dist.is_available() or not dist.is_initialized():
+        return 0
     return dist.get_rank(group=get_data_parallel_group())
 
 def get_data_parallel_world_size() -> int:
+    if not dist.is_available() or not dist.is_initialized():
+        return 1
     return dist.get_world_size(group=get_data_parallel_group())
 
 def all_to_all_4D(

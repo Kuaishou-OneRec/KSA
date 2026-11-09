@@ -1,5 +1,5 @@
 """
-Chunked Distillation Loss Computer for Summary Attention Training @ccl.
+Chunked Distillation Loss Computer for Summary Attention Training.
 
 Memory-efficient two-stage backward controller that computes CE + KL distillation
 loss in chunks along the sequence dimension. Each chunk only materializes
@@ -20,7 +20,7 @@ Usage:
     # In training loop:
     loss_dict = chunked_distill.forward_and_backward(
         student_hidden, teacher_hidden, labels,
-        loss_scale=1.0 / grad_acc,
+        gradient_accumulation_steps=grad_acc,
     )
     # backward is already done inside forward_and_backward!
     # loss_dict["ce_loss"], loss_dict["kl_loss"] are detached for logging only.
@@ -97,6 +97,7 @@ class ChunkedDistillLossComputer:
         teacher_hidden: torch.Tensor = None,
         labels: torch.Tensor = None,
         gradient_accumulation_steps: int = 1,
+        auxiliary_loss: torch.Tensor = None,
     ) -> dict:
         """
         分块计算 CE (+ 可选 KL) loss，并完成 backward。
@@ -110,6 +111,9 @@ class ChunkedDistillLossComputer:
                             为 None 时只计算 CE loss。
             labels: [b, s] — pre-shifted labels (ignore_index=-100 for masked positions)
             gradient_accumulation_steps: 梯度累积步数，梯度会除以此值
+            auxiliary_loss: 可选的标量辅助损失。它与 chunked CE/KL 合并为一次
+                            model backward，避免两次 backward 之间 FSDP 将
+                            mixed-precision 参数恢复成 FP32。
 
         Returns:
             dict: {
@@ -118,9 +122,31 @@ class ChunkedDistillLossComputer:
                 "total_loss": detached scalar — lm_factor * ce + kl_factor * kl,
             }
         """
+        if labels is None:
+            raise ValueError("labels are required for chunked loss")
+
         compute_kl = self.enable_kl and teacher_hidden is not None and self.kl_factor > 0
         device = student_hidden.device
         params = [p for p in self.lm_head.parameters() if p.requires_grad]
+
+        # Indexer-only warmup deliberately freezes the complete LM path.  In
+        # that mode the CE is still useful as an observational metric, but it
+        # must not participate in backward: neither ``student_hidden`` nor the
+        # lm-head parameters require gradients.  Besides avoiding an invalid
+        # autograd.backward(non_grad_tensor, ...), this also skips the otherwise
+        # wasted per-chunk LM gradient construction.
+        if not student_hidden.requires_grad and not params:
+            result = self.forward_only(student_hidden, teacher_hidden, labels)
+            if auxiliary_loss is not None:
+                if auxiliary_loss.ndim != 0:
+                    raise ValueError("auxiliary_loss must be a scalar tensor")
+                if not auxiliary_loss.requires_grad:
+                    raise ValueError(
+                        "auxiliary_loss must require gradients when the LM path is frozen"
+                    )
+                (auxiliary_loss / gradient_accumulation_steps).backward()
+            return result
+
         grad_accs = [torch.zeros_like(p) for p in params]
         grad_input = torch.zeros_like(student_hidden)
 
@@ -129,6 +155,10 @@ class ChunkedDistillLossComputer:
         total_elements = (labels != self.ignore_index).sum()
 
         if total_elements.item() == 0:
+            if auxiliary_loss is not None:
+                if auxiliary_loss.ndim != 0:
+                    raise ValueError("auxiliary_loss must be a scalar tensor")
+                (auxiliary_loss / gradient_accumulation_steps).backward()
             zero = torch.tensor(0.0, device=device)
             return {"ce_loss": zero, "kl_loss": zero, "total_loss": zero}
 
@@ -186,27 +216,113 @@ class ChunkedDistillLossComputer:
             total_ce_sum += ce_sum.detach()
             total_kl_sum += kl_sum.detach()
 
-        # Apply accumulated gradients.
-        # Order: backward FIRST, then lm_head grads.
-        # For tied weights (lm_head = embedding), FSDP backward sets embedding grad
-        # on p.grad via reduce-scatter. If we set p.grad first, FSDP would overwrite it.
-        # By doing backward first, we then accumulate the lm_head grad on top.
         norm = total_elements * gradient_accumulation_steps
 
-        # Backward to upstream model (gradients flow into summary params etc.)
-        student_hidden.backward(gradient=grad_input / norm)
-
-        for j, p in enumerate(params):
-            if p.grad is None:
-                p.grad = grad_accs[j] / norm
-            else:
-                p.grad += grad_accs[j] / norm
+        # Deliver the head and upstream gradients in the same autograd traversal.
+        # FSDP reduces gradients and restores sharded FP32 parameters at the end
+        # of backward. Assigning p.grad afterwards can target a stale unsharded
+        # parameter and silently lose the head update, notably after resume.
+        # Autograd also sums both contributions correctly for tied embeddings.
+        backward_tensors = [student_hidden, *params]
+        backward_grads = [grad_input / norm, *(grad / norm for grad in grad_accs)]
+        if auxiliary_loss is not None:
+            if auxiliary_loss.ndim != 0:
+                raise ValueError("auxiliary_loss must be a scalar tensor")
+            backward_tensors.append(auxiliary_loss)
+            backward_grads.append(
+                auxiliary_loss.new_tensor(1.0 / gradient_accumulation_steps)
+            )
+        torch.autograd.backward(
+            backward_tensors,
+            grad_tensors=backward_grads,
+        )
 
         # Compute reporting losses (mean over valid tokens, no loss_scale)
         ce_loss = (total_ce_sum / total_elements).detach()
         kl_loss = (total_kl_sum / total_elements).detach()
         total_loss = (self.lm_factor * ce_loss + self.kl_factor * kl_loss).detach()
 
+        return {
+            "ce_loss": ce_loss,
+            "kl_loss": kl_loss,
+            "total_loss": total_loss,
+        }
+
+    @torch.no_grad()
+    def forward_only(
+        self,
+        student_hidden: torch.Tensor,
+        teacher_hidden: torch.Tensor = None,
+        labels: torch.Tensor = None,
+    ) -> dict:
+        """Compute the same token-weighted losses without creating gradients.
+
+        This is the held-out evaluation counterpart of
+        :meth:`forward_and_backward`.  It keeps the sequence-chunked lm-head
+        projection (and therefore the bounded logits memory) while guaranteeing
+        that model parameters, optimizer state, and the input activations are
+        not modified.
+        """
+        if labels is None:
+            raise ValueError("labels are required for forward-only loss")
+
+        compute_kl = (
+            self.enable_kl
+            and teacher_hidden is not None
+            and self.kl_factor > 0
+        )
+        device = student_hidden.device
+        total_ce_sum = torch.tensor(0.0, device=device)
+        total_kl_sum = torch.tensor(0.0, device=device)
+        total_elements = (labels != self.ignore_index).sum()
+
+        if total_elements.item() == 0:
+            zero = torch.tensor(0.0, device=device)
+            return {"ce_loss": zero, "kl_loss": zero, "total_loss": zero}
+
+        seq_len = student_hidden.size(1)
+        vocab_size = self.lm_head.out_features
+        for i in range(0, seq_len, self.minibatch_size):
+            s, e = i, min(i + self.minibatch_size, seq_len)
+            student_logits = self._apply_lm_head(student_hidden[:, s:e, :])
+            labels_flat = labels[:, s:e].reshape(-1)
+            logits_flat = student_logits.reshape(-1, vocab_size)
+            valid_mask = labels_flat != self.ignore_index
+
+            if not valid_mask.any():
+                continue
+
+            ce_per_token = F.cross_entropy(
+                logits_flat,
+                labels_flat,
+                ignore_index=self.ignore_index,
+                reduction="none",
+            )
+            total_ce_sum += ce_per_token[valid_mask].sum()
+
+            if compute_kl:
+                teacher_logits = self._apply_lm_head(
+                    teacher_hidden[:, s:e, :]
+                )
+                teacher_flat = teacher_logits.reshape(-1, vocab_size)
+                teacher_lp = torch.log_softmax(
+                    teacher_flat[valid_mask].float(), dim=-1
+                )
+                student_lp = torch.log_softmax(
+                    logits_flat[valid_mask].float(), dim=-1
+                )
+                total_kl_sum += F.kl_div(
+                    student_lp,
+                    teacher_lp,
+                    reduction="none",
+                    log_target=True,
+                ).sum(dim=-1).sum()
+
+        ce_loss = (total_ce_sum / total_elements).detach()
+        kl_loss = (total_kl_sum / total_elements).detach()
+        total_loss = (
+            self.lm_factor * ce_loss + self.kl_factor * kl_loss
+        ).detach()
         return {
             "ce_loss": ce_loss,
             "kl_loss": kl_loss,

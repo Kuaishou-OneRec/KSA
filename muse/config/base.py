@@ -74,6 +74,7 @@ class BaseConfig(BaseModel):
             New config instance with merged values
         """
         current_dict = self.to_dict()
+        current_dict.pop("__class__", None)
         current_dict.update(other)
         return self.__class__(**current_dict)
     
@@ -239,4 +240,3 @@ def load_config(config_path: str) -> BaseConfig:
     
     # Use get_config to create the appropriate config instance
     return get_config(config_dict)
-
